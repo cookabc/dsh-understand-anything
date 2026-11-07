@@ -44,10 +44,10 @@
         "en": "Native DSH port of Understand Anything: deterministic knowledge graph, impact-aware queries, business-domain flows, wiki and Figma graphs, and a self-contained dashboard.",
         "zh": "Understand Anything 的 dsh 原生移植：确定性知识图谱、影响面分析、业务域流程、知识库与 Figma 图谱，以及单文件离线界面。"
       },
-      "author": "Egonex-AI",
-      "homepage": "https://github.com/Egonex-AI/Understand-Anything",
+      "author": "cookabc",
+      "homepage": "https://github.com/cookabc/dsh-understand-anything",
       "repository": {
-        "url": "https://github.com/Egonex-AI/Understand-Anything"
+        "url": "https://github.com/cookabc/dsh-understand-anything"
       },
       "metadata": {
         "category": "code-analysis",
@@ -68,11 +68,11 @@
       "versions": [
         {
           "version": "0.1.0",
-          "publishTimestamp": 1794065592,
+          "publishTimestamp": 1794066233,
           "source": {
             "type": "git",
             "url": "https://github.com/cookabc/dsh-understand-anything",
-            "commit": "2632abd2d07ce953bab63b4b457bf07d7e441b19"
+            "commit": "d7d745d47b732b2f7f097f9680dfe75318fbf9cf"
           },
           "engines": {
             "dsh": ">=0.2.2-rc.1 <0.3.0"
