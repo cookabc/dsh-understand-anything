@@ -53,10 +53,18 @@ Uninstall with `dsh plugin --profile web remove dsh-understand-anything`.
 
 ### Install from the plugin market
 
-DSH ships no built-in public index, so users add an index URL first (see [docs/PUBLISHING.md](docs/PUBLISHING.md)). Then search `understand anything` under Settings → Plugins → Discover, or install directly:
+DSH ships no built-in public index, so add an index URL first (see [docs/PUBLISHING.md](docs/PUBLISHING.md)).
 
-```
-plugin_manager({ action: "install_bundle", target: "dsh-understand-anything@0.1.0" })
+1. Open **Plugins → Discover**, click **Add index source**, and paste:
+   ```
+   https://cookabc.github.io/dsh-understand-anything/market.json
+   ```
+2. Search `understand` or `knowledge graph`, then click **Install**.
+
+Or install directly from the pinned git commit:
+
+```bash
+dsh plugin --profile web add "git+https://github.com/cookabc/dsh-understand-anything.git#d7d745d47b732b2f7f097f9680dfe75318fbf9cf"
 ```
 
 ---

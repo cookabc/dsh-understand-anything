@@ -60,10 +60,18 @@ dsh plugin --profile web remove dsh-understand-anything
 
 ### 从插件市场安装
 
-dsh 的市场没有内置公共索引，需要先添加索引地址（见 [docs/PUBLISHING.md](docs/PUBLISHING.md)）。添加后可在「设置 → 插件 → 发现」里搜索 `understand anything` 安装，或直接：
+dsh 的市场没有内置公共索引，需要先添加索引地址（见 [docs/PUBLISHING.md](docs/PUBLISHING.md)）。
 
-```
-plugin_manager({ action: "install_bundle", target: "dsh-understand-anything@0.1.0" })
+1. 打开 **插件 → 发现（Discover）**，点 **Add index source**，粘贴：
+   ```
+   https://cookabc.github.io/dsh-understand-anything/market.json
+   ```
+2. 搜索 `understand` 或 `知识图谱`，点 **Install**。
+
+也可以直接安装（git 源，钉在具体 commit）：
+
+```bash
+dsh plugin --profile web add "git+https://github.com/cookabc/dsh-understand-anything.git#d7d745d47b732b2f7f097f9680dfe75318fbf9cf"
 ```
 
 ---

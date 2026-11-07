@@ -48,13 +48,11 @@ node scripts/market-index.mjs --git https://github.com/you/dsh-understand-anythi
 [market-index] valid; install target: dsh-understand-anything@0.1.0
 ```
 
-然后把这个 `market.json` 放到任何 **HTTPS 静态地址**（GitHub Pages / 对象存储 / 自建站都行），得到形如：
-
-```
-https://your-domain.example/dsh-understand-anything/market.json
-```
+然后把这个 `market.json` 放到任何 **HTTPS 静态地址**（GitHub Pages / 对象存储 / 自建站都行）。
 
 要求：URL 必须是 `http:`/`https:`，不能带账号密码、不能带 fragment；JSON 里 `icon` 用相对路径会按索引 URL 解析。
+
+> **优先用 GitHub Pages，不要用 `raw.githubusercontent.com`。** raw 是带边缘缓存的，推送后相当长时间仍返回旧内容，实测同一台机器上 Pages 已更新、raw 还停在旧 commit。启用方式：`gh api -X POST repos/<owner>/<repo>/pages -f "source[branch]=main" -f "source[path]=/"`。
 
 ---
 
@@ -92,3 +90,39 @@ dsh plugin --profile web add dsh-understand-anything@0.1.0
 ## 想进入「官方」推荐位？
 
 官方预置清单由 `@deepseek-ai/dsh-official-bundles` 随 dsh 版本发布，属于上游维护范围，第三方无法通过发布 npm 自动进入。第三方分发的正规路径就是上面的「自建索引 → 用户添加」。
+
+---
+
+## 本仓库的现成配置
+
+已完成的状态（可直接用）：
+
+| 项 | 值 |
+|---|---|
+| 仓库 | https://github.com/cookabc/dsh-understand-anything （public，`main`） |
+| 索引地址 | `https://cookabc.github.io/dsh-understand-anything/market.json` |
+| 当前索引版本 | `0.1.0`，钉在 commit `d7d745d` |
+| 安装 spec | `git+https://github.com/cookabc/dsh-understand-anything.git#d7d745d47b732b2f7f097f9680dfe75318fbf9cf` |
+
+### 发新版时更新索引
+
+```bash
+cd dsh-understand-anything
+# 1) 改 package.json 的 version，提交并推送
+git add -A && git commit -m "release: 0.2.0" && git push
+
+# 2) 用新 commit 重新生成索引（索引会钉住这个 commit）
+COMMIT=$(git rev-parse HEAD)
+node scripts/market-index.mjs \
+  --git https://github.com/cookabc/dsh-understand-anything \
+  --commit "$COMMIT" --timestamp "$(git log -1 --format=%ct)" --out market.json
+
+# 3) 提交索引并推送
+git add market.json && git commit -m "chore: repin market index to ${COMMIT:0:7}" && git push
+```
+
+索引钉住 commit 是有意的：用户装到的是一棵不可变源码树，不会因为上游改动而悄悄变样。
+
+### 市场里搜索什么
+
+`understand`、`anything`、`knowledge graph`、`knowledge-graph`、`code-analysis`、`代码分析`、`知识图谱` 都能命中。
