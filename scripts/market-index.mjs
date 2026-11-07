@@ -61,6 +61,21 @@ function publishTimestamp() {
   throw new Error(`cannot determine the publish time of ${pkg.name}@${pkg.version}; pass --timestamp <unix-seconds>`);
 }
 
+/**
+ * Plain https web URL of this package's repository, derived from package.json.
+ * `git+https://…` and `git@host:owner/repo.git` both normalize to `https://host/owner/repo`.
+ */
+function repositoryWebUrl() {
+  const raw = pkg.repository?.url;
+  if (typeof raw !== 'string' || !raw) return undefined;
+  const ssh = /^git@([^:]+):(.+?)(?:\.git)?$/.exec(raw);
+  if (ssh) return `https://${ssh[1]}/${ssh[2]}`;
+  const cleaned = raw.replace(/^git\+/, '').replace(/\.git$/, '');
+  return /^https?:\/\//.test(cleaned) ? cleaned : undefined;
+}
+
+const repoWebUrl = repositoryWebUrl();
+
 const source = values.git
   ? {
     type: 'git',
@@ -98,9 +113,8 @@ const index = {
       en: 'Native DSH port of Understand Anything: deterministic knowledge graph, impact-aware queries, business-domain flows, wiki and Figma graphs, and a self-contained dashboard.',
       zh: 'Understand Anything 的 dsh 原生移植：确定性知识图谱、影响面分析、业务域流程、知识库与 Figma 图谱，以及单文件离线界面。',
     },
-    author: pkg.repository?.url?.match(/github\.com\/([^/]+)\//)?.[1] ?? undefined,
-    homepage: 'https://github.com/Egonex-AI/Understand-Anything',
-    repository: { url: 'https://github.com/Egonex-AI/Understand-Anything' },
+    author: repoWebUrl?.match(/github\.com\/([^/]+)\//)?.[1] ?? undefined,
+    ...(repoWebUrl ? { homepage: repoWebUrl, repository: { url: repoWebUrl } } : {}),
     metadata: {
       category: 'code-analysis',
       keywords: pkg.keywords ?? [],
