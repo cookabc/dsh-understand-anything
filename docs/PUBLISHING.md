@@ -126,3 +126,77 @@ git add market.json && git commit -m "chore: repin market index to ${COMMIT:0:7}
 ### 市场里搜索什么
 
 `understand`、`anything`、`knowledge graph`、`knowledge-graph`、`code-analysis`、`代码分析`、`知识图谱` 都能命中。
+
+---
+
+## 官方（DeepSeek）怎么规定「开发」和「上架」
+
+来源：`deepseek-ai/deepseek-harness` 仓库
+`docs/user/guide/plugin-market.md`、`docs/user/develop/basic/**`、`docs/cookbook/adding-a-tool.md`。
+
+### 开发：官方契约
+
+一个插件就是一个导出 `apply` 的模块：
+
+```js
+export const name = 'my-plugin'
+export function apply(ctx) {
+  ctx.tools.register(defineTool({ name, description, parameters, output, execute }))
+}
+```
+
+要能分发，必须打成 **bundle**：
+
+| 文件 | 作用 |
+|---|---|
+| `package.json` 的 `dsh.bundle.patch` | 声明它是 bundle，指向补丁层 |
+| `cordis.patch.yml` | 补丁层，`name` 用**包名**引用自己（不是绝对路径） |
+| 入口模块 | patch 行 `name` 解析到的那个模块 |
+
+调试期用绝对路径的 `cordis.yml` + `dsh --profile … --patch`，发布期换成 `cordis.patch.yml` + 包名——这是官方教程里明确区分的一点。
+
+### 上架：官方没有「提交到官方商店」这回事
+
+官方原文只给了**两条可发现性约定**，没有审核入口、也没有集中商店：
+
+1. **给公开仓库打 `dsh-plugin` GitHub topic。**
+   官方把它称为「可发现性约定」；`awesome-deepseek-harness` 这类列表按该 topic 索引仓库。
+2. **自己发布一个 format 1 的插件索引 `index.json`**，放在任意静态主机（官方点名 GitLab Pages / GitHub Pages / 对象存储），用户在其 DSH 的「发现 → 添加索引源」里填这个 URL。
+
+官方 bundles（`@deepseek-ai/dsh-official-bundles`）随 dsh 版本发布，由上游维护，**第三方无法通过发 npm 自动进入**。
+
+### 索引的官方硬性要求
+
+- UTF-8 JSON，默认 ≤ 128 MiB，**HTTP 2xx 且不允许重定向**
+- `format: 1`；`title` 必填且 `LocalizedText` 对象必须含 `en`
+- `versions[].publishTimestamp` 是 **Unix 秒**
+- `source` 二选一：`{"type":"npm","registry"?:url}` 或 `{"type":"git","url":https,"commit":40hex,"path"?:"dir"}`
+- `engines.dsh` 应与包自身一致；没有时 DSH 改看 `@deepseek-ai/dsh*` peer 依赖
+- `metadata.categories/labels`、`icon`、`author` 等均为可选
+
+> 官方还带一个 **reference generator**（源码仓库 `apps/plugin-market-generator`，**未随 npm 包发布**）：
+> `pnpm --filter @deepseek-ai/dsh-plugin-market-generator start --input plugins.txt --output site/index.json --title "Team plugins"`
+> 它从 npm 或 git 仓库自动抓元数据。本仓库用 `scripts/market-index.mjs` 自己做同样的事，好处是不需要 dsh 源码 checkout，且用官方校验器校验。
+
+### 社区渠道（非官方，但事实上的分发入口）
+
+| 渠道 | 做法 |
+|---|---|
+| `awesome-dsh-plugin` | 向仓库提 PR 新增 `data/plugins/<owner>__<repo>.yml`；合并后 dsh-market 自动拉取 |
+| `dsh-open-market`（dshopen.org） | 提交到其索引（1000+ 插件）；要求公开源码、npm 可装、有许可证 |
+| `awesome-deepseek-harness` | 索引打了 `dsh-plugin` topic 的公开仓库 |
+
+这两个社区渠道都偏向「npm 可安装」，走 git 源的插件不一定被接受。
+
+### 本仓库对照官方要求
+
+| 官方要求 | 状态 |
+|---|---|
+| 导出 `apply` 的插件 | ✅ |
+| `dsh.bundle.patch` + `cordis.patch.yml`（包名引用） | ✅ |
+| 公开仓库 | ✅ |
+| `dsh-plugin` GitHub topic | ✅ 已打（另有 `knowledge-graph`、`deepseek-harness`） |
+| 自建 format 1 索引，HTTPS 静态托管、无重定向 | ✅ GitHub Pages，官方校验器通过 |
+| `engines.dsh` 一致 | ✅ `>=0.2.2-rc.1 <0.3.0` |
+| 进社区 awesome 列表 | ⬜ 需要按各自规则提 PR |
+| 发布到 npm | ⬜ 当前选 git 源，未发（社区渠道多要求 npm） |
