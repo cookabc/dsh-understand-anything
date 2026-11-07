@@ -1,0 +1,53 @@
+{
+  "name": "dsh-understand-anything",
+  "version": "0.1.0",
+  "description": "Native DSH port of Understand Anything: deterministic codebase knowledge graph, impact-aware queries and a self-contained dashboard in .ua/knowledge-graph.json format. · 把 Understand Anything 的核心能力移植成 dsh 插件：确定性扫描建图、按图问答、变更影响分析与离线图谱页。",
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "cordis.patch.yml",
+    "lib",
+    "bin",
+    "skills",
+    "scripts/market-index.mjs",
+    "README.md",
+    "README.zh.md",
+    "docs/PUBLISHING.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20",
+    "dsh": ">=0.2.2-rc.1 <0.3.0"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "check": "node --test test/*.test.mjs && npm pack --dry-run"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "keywords": [
+    "dsh-plugin",
+    "knowledge-graph",
+    "codebase-analysis",
+    "architecture",
+    "onboarding",
+    "understand-anything"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Egonex-AI/Understand-Anything"
+  },
+  "license": "MIT",
+  "publishConfig": {
+    "registry": "https://registry.npmjs.org/"
+  }
+}

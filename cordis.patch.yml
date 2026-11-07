@@ -1,0 +1,18 @@
+# dsh-understand-anything bundle patch.
+#
+# Inserted into the profile's ordered bundle stack. `name` must equal the
+# package name so the loader can resolve it from the profile's node_modules.
+#
+# Optional config overrides (the plugin also reads <project>/.ua/config.json
+# and UA_* environment variables; tool arguments win over both):
+#
+# - insert:
+#     - id: dsh-understand-anything
+#       name: dsh-understand-anything
+#       config:
+#         language: zh
+#         maxFiles: 4000
+#         maxFileBytes: 524288
+- insert:
+    - id: dsh-understand-anything
+      name: dsh-understand-anything

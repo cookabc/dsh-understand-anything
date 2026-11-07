@@ -1,0 +1,446 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Understand Anything · Knowledge Graph</title>
+<style>
+  :root {
+    --bg: #0e1117; --panel: #151a23; --panel2: #1c2330; --line: #2a3342;
+    --text: #e6edf5; --muted: #8b98ab; --accent: #6ea8fe;
+    --api: #f6bd60; --service: #84a59d; --data: #9b8ade; --ui: #f28482;
+    --utility: #76c893; --test: #d9a5b3; --other: #7d8ca3; --external: #4f5b6e;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--bg); color: var(--text);
+    font: 13px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    display: flex; flex-direction: column; overflow: hidden;
+  }
+  header {
+    display: flex; align-items: center; gap: 16px; padding: 10px 16px;
+    border-bottom: 1px solid var(--line); background: var(--panel); flex: 0 0 auto;
+  }
+  header h1 { font-size: 15px; margin: 0; font-weight: 650; letter-spacing: .2px; white-space: nowrap; }
+  header h1 span { color: var(--muted); font-weight: 400; }
+  .stats { color: var(--muted); font-size: 12px; white-space: nowrap; }
+  .spacer { flex: 1; }
+  input[type=search], button {
+    background: var(--panel2); color: var(--text); border: 1px solid var(--line);
+    border-radius: 7px; padding: 6px 10px; font: inherit; outline: none;
+  }
+  input[type=search] { width: 250px; }
+  input[type=search]:focus { border-color: var(--accent); }
+  button { cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  button.active { border-color: var(--accent); color: var(--accent); }
+  #app { display: flex; flex: 1; min-height: 0; }
+  aside {
+    width: 300px; flex: 0 0 300px; border-right: 1px solid var(--line);
+    background: var(--panel); overflow-y: auto; padding: 14px;
+  }
+  aside h2 { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); margin: 18px 0 8px; }
+  aside h2:first-child { margin-top: 0; }
+  .layer { display: flex; align-items: center; gap: 8px; padding: 4px 6px; border-radius: 6px; cursor: pointer; }
+  .layer:hover { background: var(--panel2); }
+  .layer.off { opacity: .35; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; flex: 0 0 auto; }
+  .layer .count { margin-left: auto; color: var(--muted); font-size: 11px; }
+  #detail { background: var(--panel2); border: 1px solid var(--line); border-radius: 9px; padding: 12px; }
+  #detail .name { font-size: 14px; font-weight: 650; word-break: break-all; }
+  #detail .path { color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; word-break: break-all; margin: 4px 0 10px; }
+  #detail .badge { display: inline-block; padding: 1px 7px; border: 1px solid var(--line); border-radius: 99px; font-size: 11px; margin: 0 4px 4px 0; }
+  #detail p { margin: 8px 0 0; color: #cbd5e1; }
+  .rels { margin-top: 12px; max-height: 230px; overflow-y: auto; }
+  .rel { display: block; width: 100%; text-align: left; border: 0; background: none; color: var(--accent); padding: 3px 0; font-size: 12px; cursor: pointer; }
+  .rel:hover { text-decoration: underline; }
+  .rel small { color: var(--muted); }
+  .tour-step { padding: 7px 9px; border-left: 2px solid var(--line); margin-bottom: 6px; color: var(--muted); font-size: 12px; }
+  .tour-step b { color: var(--text); display: block; font-weight: 600; }
+  main { flex: 1; position: relative; min-width: 0; }
+  svg { width: 100%; height: 100%; display: block; cursor: grab; }
+  svg.dragging { cursor: grabbing; }
+  .link { stroke: #35415a; stroke-width: .7; fill: none; }
+  .node circle { stroke: #0e1117; stroke-width: 1.2; cursor: pointer; }
+  .node text { fill: #c9d4e3; font-size: 9px; pointer-events: none; }
+  .node.dim { opacity: .13; }
+  .link.dim { opacity: .06; }
+  .node.hit circle { stroke: #fff; stroke-width: 2.2; }
+  #hint { position: absolute; bottom: 12px; left: 14px; color: var(--muted); font-size: 11px; pointer-events: none; }
+  #tooltip { position: absolute; display: none; background: #0b0f16; border: 1px solid var(--line); padding: 5px 8px; border-radius: 6px; pointer-events: none; font-size: 11px; max-width: 260px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Understand Anything <span>· knowledge graph</span></h1>
+  <div class="stats" id="stats"></div>
+  <div class="spacer"></div>
+  <input type="search" id="search" placeholder="Search nodes by name, path, summary, tag…" autocomplete="off">
+  <button id="labels" class="active">Labels</button>
+  <button id="fit">Fit</button>
+</header>
+<div id="app">
+  <aside>
+    <h2>Detail</h2>
+    <div id="detail"><div class="name">Select a node</div><p>Click any circle to inspect its summary, layer and relationships. Drag to rearrange, scroll to zoom.</p></div>
+    <h2>Layers</h2>
+    <div id="layers"></div>
+    <h2>Guided tour</h2>
+    <div id="tour"></div>
+  </aside>
+  <main>
+    <svg id="canvas"><g id="viewport"><g id="links"></g><g id="nodes"></g></g></svg>
+    <div id="tooltip"></div>
+    <div id="hint">Generated locally by dsh-understand-anything · no network, no LLM calls</div>
+  </main>
+</div>
+<script id="ua-graph" type="application/json">/*__UA_GRAPH_JSON__*/</script>
+<script>
+(function () {
+  'use strict';
+  var DATA = JSON.parse(document.getElementById('ua-graph').textContent);
+  var KIND = DATA.kind || 'code';
+  var IS_DOMAIN = KIND === 'domain';
+  var COLORS = {
+    API: '#f6bd60', Service: '#84a59d', Data: '#9b8ade', UI: '#f28482',
+    Utility: '#76c893', Test: '#d9a5b3', Other: '#7d8ca3', External: '#4f5b6e',
+    Domains: '#f6bd60', Flows: '#84a59d', Steps: '#9b8ade',
+    '业务域': '#f6bd60', '业务流程': '#84a59d', '流程步骤': '#9b8ade',
+    Domain: '#f6bd60', Flow: '#84a59d', Step: '#9b8ade',
+    Article: '#6ea8fe', Topic: '#f28482', Source: '#76c893', Entity: '#d9a5b3', Claim: '#e9c46a'
+  };
+  var TYPE_COLORS = {
+    domain: '#f6bd60', flow: '#84a59d', step: '#9b8ade',
+    article: '#6ea8fe', topic: '#f28482', source: '#76c893', entity: '#d9a5b3', claim: '#e9c46a',
+    page: '#f6bd60', screen: '#84a59d', component: '#9b8ade',
+    componentSet: '#f28482', instance: '#76c893', token: '#e9c46a'
+  };
+  var TYPE_RADIUS = {
+    file: 6.5, function: 3.4, class: 4.6, module: 5, document: 5.5,
+    config: 5, table: 5, resource: 4.5, concept: 5,
+    domain: 9, flow: 7, step: 4.5, article: 5.5, topic: 7, source: 4.5, entity: 4.5, claim: 3.5,
+    page: 8, screen: 6.5, component: 4.5, componentSet: 6, instance: 3.5, token: 4
+  };
+  var colorOf = function (n) { return COLORS[n.layer] || TYPE_COLORS[n.type] || COLORS.Other; };
+  var radiusOf = function (n) { return TYPE_RADIUS[n.type] || 4; };
+  var escapeHtml = function (s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  };
+
+  var stats = document.getElementById('stats');
+  var KIND_LABEL = { code: 'code', domain: 'domain flow', knowledge: 'knowledge', design: 'design' };
+  stats.textContent = DATA.project.name + ' · ' + (KIND_LABEL[KIND] || KIND) + ' · '
+    + DATA.nodes.length + ' nodes / ' + DATA.edges.length + ' edges'
+    + (DATA.project.languages.length ? ' · ' + DATA.project.languages.join(', ') : '')
+    + (DATA.truncated ? ' (showing a bounded subset of ' + DATA.totalNodes + ')' : '');
+
+  var svg = document.getElementById('canvas');
+  var viewport = document.getElementById('viewport');
+  var linkLayer = document.getElementById('links');
+  var nodeLayer = document.getElementById('nodes');
+  var tooltip = document.getElementById('tooltip');
+  var NS = 'http://www.w3.org/2000/svg';
+  var byId = Object.create(null);
+  DATA.nodes.forEach(function (n) { byId[n.id] = n; });
+  var visible = Object.create(null);
+  DATA.nodes.forEach(function (n) { visible[n.id] = true; });
+
+  /* ---- deterministic initial layout ----
+     Domain graphs get a left-to-right column layout (domains → flows → steps)
+     like the upstream domain view; everything else starts on layer circles. */
+  var pos = Object.create(null);
+  if (IS_DOMAIN) {
+    var columns = { domain: -300, flow: 0, step: 300 };
+    var counters = { domain: 0, flow: 0, step: 0 };
+    DATA.nodes.forEach(function (n) {
+      var k = Object.prototype.hasOwnProperty.call(columns, n.type) ? n.type : 'step';
+      var i = counters[k]++;
+      pos[n.id] = {
+        x: columns[k] + (i % 3) * 20,
+        y: (i - 6) * 44 + (k === 'step' ? 12 : 0),
+        vx: 0, vy: 0
+      };
+    });
+  } else {
+    var groups = Object.create(null);
+    DATA.nodes.forEach(function (n) {
+      var k = n.layer || 'Other';
+      (groups[k] = groups[k] || []).push(n);
+    });
+    var keys = Object.keys(groups).sort();
+    keys.forEach(function (k, gi) {
+      var list = groups[k];
+      var angle0 = (gi / keys.length) * Math.PI * 2;
+      list.forEach(function (n, i) {
+        var a = angle0 + (i / Math.max(1, list.length)) * 0.85;
+        var r = 170 + (i % 11) * 24 + gi * 9;
+        pos[n.id] = { x: Math.cos(a) * r, y: Math.sin(a) * r, vx: 0, vy: 0 };
+      });
+    });
+  }
+
+  /* ---- bounded force layout with a spatial grid (not for domain flows) ---- */
+  if (!IS_DOMAIN) (function simulate() {
+    var iterations = 90;
+    var cell = 52;
+    for (var it = 0; it < iterations; it++) {
+      var alpha = 0.55 * (1 - it / iterations) + 0.02;
+      var grid = Object.create(null);
+      DATA.nodes.forEach(function (n) {
+        if (!visible[n.id]) return;
+        var p = pos[n.id];
+        var cx = Math.floor(p.x / cell), cy = Math.floor(p.y / cell);
+        var k = cx + ',' + cy;
+        (grid[k] = grid[k] || []).push(n.id);
+      });
+      DATA.nodes.forEach(function (n) {
+        if (!visible[n.id]) return;
+        var p = pos[n.id];
+        var cx = Math.floor(p.x / cell), cy = Math.floor(p.y / cell);
+        for (var dx = -1; dx <= 1; dx++) for (var dy = -1; dy <= 1; dy++) {
+          var bucket = grid[(cx + dx) + ',' + (cy + dy)] || [];
+          for (var b = 0; b < bucket.length; b++) {
+            var other = bucket[b];
+            if (other === n.id) continue;
+            var q = pos[other];
+            var ddx = p.x - q.x, ddy = p.y - q.y;
+            var d2 = ddx * ddx + ddy * ddy + 0.01;
+            if (d2 > 26000) continue;
+            var f = (900 / d2) * alpha;
+            var d = Math.sqrt(d2);
+            p.vx += (ddx / d) * f; p.vy += (ddy / d) * f;
+          }
+        }
+        p.vx -= p.x * 0.019 * alpha;
+        p.vy -= p.y * 0.019 * alpha;
+      });
+      DATA.edges.forEach(function (e) {
+        if (!visible[e.s] || !visible[e.t]) return;
+        var a = pos[e.s], b = pos[e.t];
+        if (!a || !b) return;
+        var ddx = b.x - a.x, ddy = b.y - a.y;
+        var d = Math.sqrt(ddx * ddx + ddy * ddy) + 0.01;
+        var target = e.k === 'contains' ? 26 : 95;
+        var f = (d - target) * 0.012 * alpha;
+        var fx = (ddx / d) * f, fy = (ddy / d) * f;
+        a.vx += fx; a.vy += fy; b.vx -= fx; b.vy -= fy;
+      });
+      DATA.nodes.forEach(function (n) {
+        var p = pos[n.id];
+        p.x += Math.max(-7, Math.min(7, p.vx));
+        p.y += Math.max(-7, Math.min(7, p.vy));
+        p.vx *= 0.72; p.vy *= 0.72;
+      });
+    }
+  })();
+
+  /* ---- render ---- */
+  var linkEls = [];
+  DATA.edges.forEach(function (e) {
+    var a = pos[e.s], b = pos[e.t];
+    if (!a || !b) return;
+    var line = document.createElementNS(NS, 'line');
+    line.setAttribute('x1', a.x); line.setAttribute('y1', a.y);
+    line.setAttribute('x2', b.x); line.setAttribute('y2', b.y);
+    line.setAttribute('class', 'link');
+    line.dataset.s = e.s; line.dataset.t = e.t;
+    linkLayer.appendChild(line);
+    linkEls.push(line);
+  });
+  var nodeEls = Object.create(null);
+  var showLabels = true;
+  DATA.nodes.forEach(function (n) {
+    var p = pos[n.id];
+    var g = document.createElementNS(NS, 'g');
+    g.setAttribute('class', 'node');
+    g.setAttribute('transform', 'translate(' + p.x + ',' + p.y + ')');
+    var c = document.createElementNS(NS, 'circle');
+    c.setAttribute('r', radiusOf(n));
+    c.setAttribute('fill', colorOf(n));
+    g.appendChild(c);
+    if (n.type === 'file' || n.type === 'document' || n.type === 'module'
+      || n.type === 'domain' || n.type === 'flow' || n.type === 'step'
+      || n.type === 'article' || n.type === 'topic' || n.type === 'entity'
+      || n.type === 'page' || n.type === 'screen' || n.type === 'component'
+      || n.type === 'componentSet' || n.type === 'token') {
+      var t = document.createElementNS(NS, 'text');
+      t.setAttribute('x', radiusOf(n) + 3); t.setAttribute('y', 3);
+      t.textContent = n.name.length > 34 ? n.name.slice(0, 33) + '…' : n.name;
+      g.appendChild(t);
+    }
+    g.dataset.id = n.id;
+    nodeLayer.appendChild(g);
+    nodeEls[n.id] = g;
+  });
+
+  var transform = { x: 0, y: 0, k: 1 };
+  function applyTransform() {
+    viewport.setAttribute('transform', 'translate(' + transform.x + ',' + transform.y + ') scale(' + transform.k + ')');
+  }
+  function fit() {
+    var rect = svg.getBoundingClientRect();
+    var minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    DATA.nodes.forEach(function (n) {
+      if (!visible[n.id]) return;
+      var p = pos[n.id];
+      minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x);
+      minY = Math.min(minY, p.y); maxY = Math.max(maxY, p.y);
+    });
+    if (!isFinite(minX)) return;
+    var w = Math.max(1, maxX - minX + 160), h = Math.max(1, maxY - minY + 160);
+    transform.k = Math.max(0.12, Math.min(2, Math.min(rect.width / w, rect.height / h)));
+    transform.x = rect.width / 2 - ((minX + maxX) / 2) * transform.k;
+    transform.y = rect.height / 2 - ((minY + maxY) / 2) * transform.k;
+    applyTransform();
+  }
+
+  /* ---- detail panel ---- */
+  var detail = document.getElementById('detail');
+  var selected = null;
+  function selectNode(id) {
+    var n = byId[id];
+    if (!n) return;
+    selected = id;
+    Object.keys(nodeEls).forEach(function (k) { nodeEls[k].classList.toggle('hit', k === id); });
+    var incoming = [], outgoing = [];
+    DATA.edges.forEach(function (e) {
+      if (e.t === id) incoming.push(e);
+      if (e.s === id) outgoing.push(e);
+    });
+    var html = '<div class="name">' + escapeHtml(n.name) + '</div>'
+      + '<div class="path">' + escapeHtml(n.path || n.id) + '</div>'
+      + '<span class="badge">' + escapeHtml(n.type) + '</span>'
+      + '<span class="badge" style="color:' + colorOf(n) + '">' + escapeHtml(n.layer) + '</span>';
+    if (n.tags.length) html += '<div>' + n.tags.map(function (t) { return '<span class="badge">' + escapeHtml(t) + '</span>'; }).join('') + '</div>';
+    html += '<p>' + (n.summary ? escapeHtml(n.summary) : '<i>No summary yet — run ua_annotate to add one.</i>') + '</p>';
+    html += '<div class="rels"><b>Incoming (' + incoming.length + ')</b><br>';
+    incoming.slice(0, 14).forEach(function (e) {
+      html += '<button class="rel" data-jump="' + escapeHtml(e.s) + '">' + escapeHtml((byId[e.s] || {}).name || e.s) + ' <small>' + escapeHtml(e.k) + '</small></button>';
+    });
+    html += '<br><b>Outgoing (' + outgoing.length + ')</b><br>';
+    outgoing.slice(0, 14).forEach(function (e) {
+      html += '<button class="rel" data-jump="' + escapeHtml(e.t) + '">' + escapeHtml((byId[e.t] || {}).name || e.t) + ' <small>' + escapeHtml(e.k) + '</small></button>';
+    });
+    html += '</div>';
+    detail.innerHTML = html;
+    Array.prototype.forEach.call(detail.querySelectorAll('[data-jump]'), function (btn) {
+      btn.addEventListener('click', function () { selectNode(btn.dataset.jump); });
+    });
+  }
+
+  /* ---- layers & tour ---- */
+  var layersEl = document.getElementById('layers');
+  var layerState = Object.create(null);
+  var counts = Object.create(null);
+  DATA.nodes.forEach(function (n) { counts[n.layer] = (counts[n.layer] || 0) + 1; });
+  Object.keys(counts).sort().forEach(function (k) {
+    layerState[k] = true;
+    var row = document.createElement('div');
+    row.className = 'layer';
+    row.innerHTML = '<span class="dot" style="background:' + (COLORS[k] || COLORS.Other) + '"></span>'
+      + '<span>' + escapeHtml(k) + '</span><span class="count">' + counts[k] + '</span>';
+    row.addEventListener('click', function () {
+      layerState[k] = !layerState[k];
+      row.classList.toggle('off', !layerState[k]);
+      refreshVisibility();
+    });
+    layersEl.appendChild(row);
+  });
+  var tourEl = document.getElementById('tour');
+  (DATA.tour || []).slice(0, 12).forEach(function (t) {
+    var d = document.createElement('div');
+    d.className = 'tour-step';
+    d.innerHTML = '<b>' + escapeHtml(t.title) + '</b>' + escapeHtml(t.description);
+    tourEl.appendChild(d);
+  });
+  if (!(DATA.tour || []).length) tourEl.innerHTML = '<div class="tour-step">No tour yet.</div>';
+
+  function refreshVisibility() {
+    var q = (document.getElementById('search').value || '').trim().toLowerCase();
+    DATA.nodes.forEach(function (n) {
+      var layerOk = layerState[n.layer] !== false;
+      var queryOk = !q || (n.name + ' ' + (n.path || '') + ' ' + n.summary + ' ' + n.tags.join(' ')).toLowerCase().indexOf(q) >= 0;
+      var on = layerOk && queryOk;
+      visible[n.id] = on;
+      var el = nodeEls[n.id];
+      el.style.display = on ? '' : 'none';
+      el.classList.toggle('dim', Boolean(q) && !queryOk);
+    });
+    linkEls.forEach(function (line) {
+      var on = visible[line.dataset.s] && visible[line.dataset.t];
+      line.style.display = on ? '' : 'none';
+      line.classList.toggle('dim', Boolean(q) && !on);
+    });
+  }
+
+  /* ---- interactions ---- */
+  document.getElementById('search').addEventListener('input', refreshVisibility);
+  document.getElementById('fit').addEventListener('click', fit);
+  document.getElementById('labels').addEventListener('click', function () {
+    showLabels = !showLabels;
+    this.classList.toggle('active', showLabels);
+    Array.prototype.forEach.call(nodeLayer.querySelectorAll('text'), function (t) { t.style.display = showLabels ? '' : 'none'; });
+  });
+
+  var drag = null;
+  svg.addEventListener('pointerdown', function (ev) {
+    var target = ev.target.closest ? ev.target.closest('.node') : null;
+    if (target) {
+      drag = { kind: 'node', id: target.dataset.id, x: ev.clientX, y: ev.clientY, moved: false };
+      selectNode(target.dataset.id);
+    } else {
+      drag = { kind: 'pan', x: ev.clientX, y: ev.clientY, ox: transform.x, oy: transform.y, moved: false };
+      svg.classList.add('dragging');
+    }
+    svg.setPointerCapture(ev.pointerId);
+  });
+  svg.addEventListener('pointermove', function (ev) {
+    if (!drag) {
+      var t = ev.target.closest ? ev.target.closest('.node') : null;
+      if (t) {
+        var n = byId[t.dataset.id];
+        tooltip.style.display = 'block';
+        tooltip.style.left = (ev.clientX + 12) + 'px';
+        tooltip.style.top = (ev.clientY + 12) + 'px';
+        tooltip.textContent = n.name + ' · ' + n.type + (n.path ? ' · ' + n.path : '');
+      } else tooltip.style.display = 'none';
+      return;
+    }
+    var dx = ev.clientX - drag.x, dy = ev.clientY - drag.y;
+    if (Math.abs(dx) + Math.abs(dy) > 3) drag.moved = true;
+    if (drag.kind === 'pan') {
+      transform.x = drag.ox + dx; transform.y = drag.oy + dy; applyTransform();
+    } else {
+      var p = pos[drag.id];
+      p.x += dx / transform.k; p.y += dy / transform.k;
+      drag.x = ev.clientX; drag.y = ev.clientY;
+      nodeEls[drag.id].setAttribute('transform', 'translate(' + p.x + ',' + p.y + ')');
+      linkEls.forEach(function (line) {
+        if (line.dataset.s === drag.id) { line.setAttribute('x1', p.x); line.setAttribute('y1', p.y); }
+        if (line.dataset.t === drag.id) { line.setAttribute('x2', p.x); line.setAttribute('y2', p.y); }
+      });
+    }
+  });
+  svg.addEventListener('pointerup', function () { drag = null; svg.classList.remove('dragging'); });
+  svg.addEventListener('pointerleave', function () { tooltip.style.display = 'none'; });
+  svg.addEventListener('wheel', function (ev) {
+    ev.preventDefault();
+    var rect = svg.getBoundingClientRect();
+    var mx = ev.clientX - rect.left, my = ev.clientY - rect.top;
+    var old = transform.k;
+    var next = Math.max(0.1, Math.min(6, old * (ev.deltaY < 0 ? 1.12 : 0.89)));
+    transform.x = mx - (mx - transform.x) * (next / old);
+    transform.y = my - (my - transform.y) * (next / old);
+    transform.k = next;
+    applyTransform();
+  }, { passive: false });
+
+  fit();
+  refreshVisibility();
+})();
+</script>
+</body>
+</html>

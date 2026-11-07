@@ -1,0 +1,6 @@
+node_modules/
+.ua/
+.understand-anything/
+*.tgz
+.DS_Store
+npm-debug.log*
