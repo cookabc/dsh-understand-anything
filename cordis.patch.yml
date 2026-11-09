@@ -13,6 +13,8 @@
 #         language: zh
 #         maxFiles: 4000
 #         maxFileBytes: 524288
+#         maxTotalBytes: 67108864
+#         experimental: false
 - insert:
     - id: dsh-understand-anything
       name: dsh-understand-anything

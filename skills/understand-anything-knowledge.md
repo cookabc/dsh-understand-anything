@@ -1,6 +1,6 @@
 ---
 name: understand-anything-knowledge
-description: 分析 Karpathy 式 LLM wiki（raw/wiki/index.md + wikilink），生成带实体、声明与隐式关系的知识图谱。对应 Understand Anything 的 /understand-knowledge。
+description: 分析 Karpathy 式 LLM wiki（raw/wiki/index.md + wikilink），生成带实体、声明与隐式关系的知识图谱。
 whenToUse: 用户给了一个知识库 / wiki 目录，想把笔记之间的引用关系变成可浏览的图谱时。
 ---
 
@@ -10,7 +10,7 @@ whenToUse: 用户给了一个知识库 / wiki 目录，想把笔记之间的引�
 
 ## 判定标准
 
-目录里要有 `index.md`，且有若干 `.md` 文件包含 `[[wikilink]]`。可选 `raw/` 或 `sources/` 放原始资料，`CLAUDE.md` / `AGENTS.md` 之类作为 schema 文件。不满足时工具会返回 `NOT_KARPATHY_WIKI`。
+目录里要有 `index.md`，且有若干 `.md` 文件包含 `[[wikilink]]`。可选 `raw/` 或 `sources/` 放原始资料（不解析）。工具对所有 `.md` 一律按普通文章解析，不区分 schema 概念，`CLAUDE.md` / `AGENTS.md` 等文件也只作为普通文章处理。不满足时工具会返回 `NOT_KARPATHY_WIKI`。
 
 ## 工作流
 

@@ -24,7 +24,10 @@ npm publish --access public        # 需要 npm 登录 + 已启用 2FA
 | `dsh.bundle.patch` | `./cordis.patch.yml` | 没有它包就不是 bundle，市场会标成 `not-a-bundle` |
 | `files` | 含 `index.js`/`lib`/`bin`/`skills`/`scripts/market-index.mjs` | 缺文件会导致装完加载失败 |
 
-> `repository` 字段现在指向上游 Egonex-AI/Understand-Anything。如果你要发布成自己的包，**改成你的仓库地址**，否则市场详情页会链到别人的项目上。
+| 实际指向 | 说明 |
+|---|---|
+| `package.json` `repository` | `git+https://github.com/cookabc/dsh-understand-anything.git` |
+| 当前索引版本 | 见 `market.json`；发版时按下方 checklist 重新生成并 repin。 |
 
 ---
 
@@ -45,14 +48,14 @@ node scripts/market-index.mjs --git https://github.com/you/dsh-understand-anythi
 脚本会用 **dsh 自己的校验器**（`@deepseek-ai/dsh-plugin-market-index`）验证输出，通过时会打印安装目标，例如：
 
 ```
-[market-index] valid; install target: dsh-understand-anything@0.1.0
+[market-index] valid; install target: dsh-understand-anything@<version>
 ```
 
 然后把这个 `market.json` 放到任何 **HTTPS 静态地址**（GitHub Pages / 对象存储 / 自建站都行）。
 
 要求：URL 必须是 `http:`/`https:`，不能带账号密码、不能带 fragment；JSON 里 `icon` 用相对路径会按索引 URL 解析。
 
-> **优先用 GitHub Pages，不要用 `raw.githubusercontent.com`。** raw 是带边缘缓存的，推送后相当长时间仍返回旧内容，实测同一台机器上 Pages 已更新、raw 还停在旧 commit。启用方式：`gh api -X POST repos/<owner>/<repo>/pages -f "source[branch]=main" -f "source[path]=/"`。
+> **优先用 GitHub Pages，不要用 `raw.githubusercontent.com`。** raw 带边缘缓存，推送后可能仍返回缓存内容。启用方式：`gh api -X POST repos/<owner>/<repo>/pages -f "source[branch]=main" -f "source[path]=/"`。
 
 ---
 
@@ -63,13 +66,13 @@ node scripts/market-index.mjs --git https://github.com/you/dsh-understand-anythi
 **或者在对话里让 agent 调 `plugin_manager`：**
 
 ```
-plugin_manager({ action: "install_bundle", target: "dsh-understand-anything@0.1.0" })
+plugin_manager({ action: "install_bundle", target: "dsh-understand-anything@<version>" })
 ```
 
 **或者命令行：**
 
 ```bash
-dsh plugin --profile web add dsh-understand-anything@0.1.0
+dsh plugin --profile web add dsh-understand-anything@<version>
 ```
 
 ---
@@ -89,27 +92,25 @@ dsh plugin --profile web add dsh-understand-anything@0.1.0
 
 ## 想进入「官方」推荐位？
 
-官方预置清单由 `@deepseek-ai/dsh-official-bundles` 随 dsh 版本发布，属于上游维护范围，第三方无法通过发布 npm 自动进入。第三方分发的正规路径就是上面的「自建索引 → 用户添加」。
+官方预置清单由 `@deepseek-ai/dsh-official-bundles` 随 dsh 版本发布。第三方分发的正规路径是「自建索引 → 用户添加」。
 
 ---
 
-## 本仓库的现成配置
-
-已完成的状态（可直接用）：
+## 本仓库配置
 
 | 项 | 值 |
 |---|---|
 | 仓库 | https://github.com/cookabc/dsh-understand-anything （public，`main`） |
 | 索引地址 | `https://cookabc.github.io/dsh-understand-anything/market.json` |
-| 当前索引版本 | `0.1.0`，钉在 commit `d7d745d` |
-| 安装 spec | `git+https://github.com/cookabc/dsh-understand-anything.git#d7d745d47b732b2f7f097f9680dfe75318fbf9cf` |
+| 当前索引版本 | 见 `market.json` 最新 `versions[0].version` |
+| 安装 spec | `git+https://github.com/cookabc/dsh-understand-anything.git#<versions[0].source.commit>` |
 
-### 发新版时更新索引
+### 发版
 
 ```bash
 cd dsh-understand-anything
-# 1) 改 package.json 的 version，提交并推送
-git add -A && git commit -m "release: 0.2.0" && git push
+# 1) 设定 package.json 的 version 并推送
+git add -A && git commit -m "release: <version>" && git push
 
 # 2) 用新 commit 重新生成索引（索引会钉住这个 commit）
 COMMIT=$(git rev-parse HEAD)
@@ -118,10 +119,10 @@ node scripts/market-index.mjs \
   --commit "$COMMIT" --timestamp "$(git log -1 --format=%ct)" --out market.json
 
 # 3) 提交索引并推送
-git add market.json && git commit -m "chore: repin market index to ${COMMIT:0:7}" && git push
+git add market.json && git commit -m "chore: repin market index" && git push
 ```
 
-索引钉住 commit 是有意的：用户装到的是一棵不可变源码树，不会因为上游改动而悄悄变样。
+索引钉住 commit：用户装到的是一棵不可变源码树。
 
 ### 市场里搜索什么
 
@@ -163,7 +164,7 @@ export function apply(ctx) {
    官方把它称为「可发现性约定」；`awesome-deepseek-harness` 这类列表按该 topic 索引仓库。
 2. **自己发布一个 format 1 的插件索引 `index.json`**，放在任意静态主机（官方点名 GitLab Pages / GitHub Pages / 对象存储），用户在其 DSH 的「发现 → 添加索引源」里填这个 URL。
 
-官方 bundles（`@deepseek-ai/dsh-official-bundles`）随 dsh 版本发布，由上游维护，**第三方无法通过发 npm 自动进入**。
+官方 bundles（`@deepseek-ai/dsh-official-bundles`）随 dsh 版本发布，**第三方无法通过发 npm 自动进入**。
 
 ### 索引的官方硬性要求
 

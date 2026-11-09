@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Understand Anything · Knowledge Graph</title>
+<title data-chrome-key="documentTitle">Understand Anything · Knowledge Graph</title>
 <style>
   :root {
     --bg: #0e1117; --panel: #151a23; --panel2: #1c2330; --line: #2a3342;
@@ -67,32 +67,34 @@
   .node.dim { opacity: .13; }
   .link.dim { opacity: .06; }
   .node.hit circle { stroke: #fff; stroke-width: 2.2; }
+  .rel-more { color: var(--muted); font-size: 12px; font-style: italic; padding: 2px 0; }
   #hint { position: absolute; bottom: 12px; left: 14px; color: var(--muted); font-size: 11px; pointer-events: none; }
   #tooltip { position: absolute; display: none; background: #0b0f16; border: 1px solid var(--line); padding: 5px 8px; border-radius: 6px; pointer-events: none; font-size: 11px; max-width: 260px; }
+  .node:focus-visible { outline: 1.5px solid var(--accent); outline-offset: 2px; }
 </style>
 </head>
 <body>
 <header>
-  <h1>Understand Anything <span>· knowledge graph</span></h1>
+  <h1>Understand Anything <span data-chrome-key="appSubtitle">· knowledge graph</span></h1>
   <div class="stats" id="stats"></div>
   <div class="spacer"></div>
-  <input type="search" id="search" placeholder="Search nodes by name, path, summary, tag…" autocomplete="off">
-  <button id="labels" class="active">Labels</button>
-  <button id="fit">Fit</button>
+  <input type="search" id="search" data-chrome-key="searchPlaceholder" placeholder="Find a file or function…" autocomplete="off">
+  <button id="labels" class="active" data-chrome-key="labels">Labels</button>
+  <button id="fit" data-chrome-key="fit">Fit</button>
 </header>
 <div id="app">
   <aside>
-    <h2>Detail</h2>
-    <div id="detail"><div class="name">Select a node</div><p>Click any circle to inspect its summary, layer and relationships. Drag to rearrange, scroll to zoom.</p></div>
-    <h2>Layers</h2>
+    <h2 data-chrome-key="detailHeading">Detail</h2>
+    <div id="detail"><div class="name" data-chrome-key="selectNode">Select a node</div><p data-chrome-key="selectNodeHelp">Click any circle to inspect its summary, layer and relationships. Drag to rearrange, scroll to zoom.</p></div>
+    <h2 data-chrome-key="layersHeading">Layers</h2>
     <div id="layers"></div>
-    <h2>Guided tour</h2>
+    <h2 data-chrome-key="tourHeading">Guided tour</h2>
     <div id="tour"></div>
   </aside>
   <main>
     <svg id="canvas"><g id="viewport"><g id="links"></g><g id="nodes"></g></g></svg>
     <div id="tooltip"></div>
-    <div id="hint">Generated locally by dsh-understand-anything · no network, no LLM calls</div>
+    <div id="hint" data-chrome-key="hint">Generated locally by dsh-understand-anything · no network, no LLM calls</div>
   </main>
 </div>
 <script id="ua-graph" type="application/json">/*__UA_GRAPH_JSON__*/</script>
@@ -130,12 +132,134 @@
     });
   };
 
+  /* ---- UI language ----
+     Only en and zh are authored here. The graph's language drives the
+     whole chrome: a zh graph gets Chinese chrome to match its Chinese
+     summaries and layer labels. Language codes outside en/zh (ja, ko,
+     ru, vi, …) fall back to English chrome rather than a half-translated
+     page. A zh-prefixed code is still Chinese, so the check is on the
+     primary subtag (zh-TW -> zh). Node names, layer badges and tour
+     steps are graph content (already localized with the graph) and are
+     never translated here. */
+  var CHROME = {
+    en: {
+      documentTitle: 'Understand Anything · Knowledge Graph',
+      appSubtitle: '· knowledge graph',
+      searchPlaceholder: 'Find a file or function…',
+      labels: 'Labels',
+      fit: 'Fit',
+      detailHeading: 'Detail',
+      layersHeading: 'Layers',
+      tourHeading: 'Guided tour',
+      selectNode: 'Select a node',
+      selectNodeHelp: 'Click any circle to inspect its summary, layer and relationships. Drag to rearrange, scroll to zoom.',
+      hint: 'Generated locally by dsh-understand-anything · no network, no LLM calls',
+      nodes: 'nodes',
+      edges: 'edges',
+      codeNodes: 'nodes',
+      truncatedCountSuffix: ' (showing a bounded subset of {total})',
+      codeKindCode: 'code',
+      codeKindDomain: 'domain flow',
+      codeKindKnowledge: 'knowledge',
+      codeKindDesign: 'design',
+      noDescription: 'No summary yet — run ua_annotate to add one.',
+      noMatchingNodes: 'No matching nodes',
+      noSourceFiles: 'No source files found',
+      noSearchResults: 'No matches. Try a file path or a shorter name.',
+      noTour: 'No tour yet.',
+      matchesPrefix: 'Matches (',
+      showingOf: 'Showing 20 of {count}',
+      partialScanNotice: 'Partial scan — some source was not analyzed',
+      scanCompletedNotice: 'Scan completed within configured limits',
+      scopePrefix: 'Scope: ',
+      emptyStateHelp: 'Change the search or turn a layer back on.',
+      dashedLinksHint: 'Dashed links are inferred, not verified calls.',
+      incomingPrefix: 'Incoming (',
+      outgoingPrefix: 'Outgoing (',
+      truncatedNotice: '{shown} of {total} shown',
+      inferredSuffix: '· inferred',
+      unresolvedSuffix: '· unresolved',
+      lineSuffix: '· line {line}',
+    },
+    zh: {
+      documentTitle: 'Understand Anything · 知识图谱',
+      appSubtitle: '· 知识图谱',
+      searchPlaceholder: '查找文件或函数…',
+      labels: '标签',
+      fit: '适应视图',
+      detailHeading: '详情',
+      layersHeading: '分层',
+      tourHeading: '导览',
+      selectNode: '选择一个节点',
+      selectNodeHelp: '点击任意圆圈查看其摘要、分层和关系；拖拽重新排布，滚动缩放。',
+      hint: '由 dsh-understand-anything 在本地生成 · 不访问网络，不调用大模型',
+      nodes: '个节点',
+      edges: '条边',
+      codeNodes: '个节点',
+      truncatedCountSuffix: '（共 {total} 个节点，仅显示有界子集）',
+      codeKindCode: '代码',
+      codeKindDomain: '领域流程',
+      codeKindKnowledge: '知识库',
+      codeKindDesign: '设计',
+      noDescription: '尚无摘要——运行 ua_annotate 添加。',
+      noMatchingNodes: '没有匹配的节点',
+      noSourceFiles: '没有找到源文件',
+      noSearchResults: '没有匹配结果，试试文件路径或更短的名称。',
+      noTour: '暂无导览。',
+      matchesPrefix: '匹配 (',
+      showingOf: '已显示 20 / {count}',
+      partialScanNotice: '部分扫描——某些源码未被分析',
+      scanCompletedNotice: '已在配置限制内完成扫描',
+      scopePrefix: '范围: ',
+      emptyStateHelp: '更改搜索词或打开被关闭的分层。',
+      dashedLinksHint: '虚线是推断出的关系，未经核实。',
+      incomingPrefix: '传入 (',
+      outgoingPrefix: '传出 (',
+      truncatedNotice: '已显示 {shown} / {total} 条',
+      inferredSuffix: '· 推断',
+      unresolvedSuffix: '· 未解析',
+      lineSuffix: '· 第 {line} 行',
+    },
+  };
+
+  var CHROME_LANG = String(DATA.language || 'en').toLowerCase().split(/[-_]/)[0] === 'zh' ? 'zh' : 'en';
+  var CHROME_STRINGS = CHROME[CHROME_LANG] || CHROME.en;
+  function chrome(key, params) {
+    var text = CHROME_STRINGS[key];
+    if (text == null) text = CHROME.en[key];
+    if (text == null) return key;
+    if (!params) return text;
+    Object.keys(params).forEach(function (name) {
+      text = text.split('{' + name + '}').join(String(params[name]));
+    });
+    return text;
+  }
+
+  /* Apply the resolved locale to every static string in the chrome. */
+  var localizeStaticChrome = function () {
+    Array.prototype.forEach.call(document.querySelectorAll('[data-chrome-key]'), function (el) {
+      var value = chrome(el.getAttribute('data-chrome-key'));
+      if (el.tagName === 'INPUT') {
+        el.setAttribute('placeholder', value);
+      } else if (el.tagName === 'TITLE') {
+        el.textContent = value;
+      } else {
+        el.textContent = value;
+      }
+    });
+  };
+  localizeStaticChrome();
   var stats = document.getElementById('stats');
-  var KIND_LABEL = { code: 'code', domain: 'domain flow', knowledge: 'knowledge', design: 'design' };
+  var KIND_LABEL = {
+    code: CHROME_LANG === 'zh' ? chrome('codeKindCode') : 'code',
+    domain: CHROME_LANG === 'zh' ? chrome('codeKindDomain') : 'domain flow',
+    knowledge: CHROME_LANG === 'zh' ? chrome('codeKindKnowledge') : 'knowledge',
+    design: CHROME_LANG === 'zh' ? chrome('codeKindDesign') : 'design',
+  };
   stats.textContent = DATA.project.name + ' · ' + (KIND_LABEL[KIND] || KIND) + ' · '
-    + DATA.nodes.length + ' nodes / ' + DATA.edges.length + ' edges'
+    + DATA.nodes.length + ' ' + chrome('nodes') + ' / ' + DATA.edges.length + ' ' + chrome('edges')
     + (DATA.project.languages.length ? ' · ' + DATA.project.languages.join(', ') : '')
-    + (DATA.truncated ? ' (showing a bounded subset of ' + DATA.totalNodes + ')' : '');
+    + (DATA.truncated ? chrome('truncatedCountSuffix', { total: DATA.totalNodes }) : '');
 
   var svg = document.getElementById('canvas');
   var viewport = document.getElementById('viewport');
@@ -257,6 +381,9 @@
     var g = document.createElementNS(NS, 'g');
     g.setAttribute('class', 'node');
     g.setAttribute('transform', 'translate(' + p.x + ',' + p.y + ')');
+    g.setAttribute('tabindex', '0');
+    g.setAttribute('role', 'button');
+    g.setAttribute('aria-label', n.name + (n.path ? ' — ' + n.path : ''));
     var c = document.createElementNS(NS, 'circle');
     c.setAttribute('r', radiusOf(n));
     c.setAttribute('fill', colorOf(n));
@@ -266,10 +393,10 @@
       || n.type === 'article' || n.type === 'topic' || n.type === 'entity'
       || n.type === 'page' || n.type === 'screen' || n.type === 'component'
       || n.type === 'componentSet' || n.type === 'token') {
-      var t = document.createElementNS(NS, 'text');
-      t.setAttribute('x', radiusOf(n) + 3); t.setAttribute('y', 3);
-      t.textContent = n.name.length > 34 ? n.name.slice(0, 33) + '…' : n.name;
-      g.appendChild(t);
+      var label = document.createElementNS(NS, 'text');
+      label.setAttribute('x', radiusOf(n) + 3); label.setAttribute('y', 3);
+      label.textContent = n.name.length > 34 ? n.name.slice(0, 33) + '…' : n.name;
+      g.appendChild(label);
     }
     g.dataset.id = n.id;
     nodeLayer.appendChild(g);
@@ -300,6 +427,23 @@
   /* ---- detail panel ---- */
   var detail = document.getElementById('detail');
   var selected = null;
+  var RELATION_LIST_LIMIT = 14;
+  function relListHtml(list, otherKey) {
+    var html = '';
+    list.slice(0, RELATION_LIST_LIMIT).forEach(function (e) {
+      html += '<button class="rel" data-jump="' + escapeHtml(e[otherKey]) + '">' + escapeHtml((byId[e[otherKey]] || {}).name || e[otherKey]) + ' <small>' + escapeHtml(relSuffix(e)) + '</small></button>';
+    });
+    if (list.length > RELATION_LIST_LIMIT) {
+      html += '<div class="rel-more">' + escapeHtml(chrome('truncatedNotice', { shown: RELATION_LIST_LIMIT, total: list.length })) + '</div>';
+    }
+    return html;
+  }
+  function relSuffix(e) {
+    return e.k
+      + (e.inferred ? ' ' + chrome('inferredSuffix') : '')
+      + (e.resolution === 'unresolved' ? ' ' + chrome('unresolvedSuffix') : '')
+      + (e.evidence && e.evidence.line ? ' ' + chrome('lineSuffix', { line: e.evidence.line }) : '');
+  }
   function selectNode(id) {
     var n = byId[id];
     if (!n) return;
@@ -314,17 +458,13 @@
       + '<div class="path">' + escapeHtml(n.path || n.id) + '</div>'
       + '<span class="badge">' + escapeHtml(n.type) + '</span>'
       + '<span class="badge" style="color:' + colorOf(n) + '">' + escapeHtml(n.layer) + '</span>';
-    if (n.tags.length) html += '<div>' + n.tags.map(function (t) { return '<span class="badge">' + escapeHtml(t) + '</span>'; }).join('') + '</div>';
-    html += '<p>' + (n.summary ? escapeHtml(n.summary) : '<i>No summary yet — run ua_annotate to add one.</i>') + '</p>';
-    html += '<div class="rels"><b>Incoming (' + incoming.length + ')</b><br>';
-    incoming.slice(0, 14).forEach(function (e) {
-      html += '<button class="rel" data-jump="' + escapeHtml(e.s) + '">' + escapeHtml((byId[e.s] || {}).name || e.s) + ' <small>' + escapeHtml(e.k) + '</small></button>';
-    });
-    html += '<br><b>Outgoing (' + outgoing.length + ')</b><br>';
-    outgoing.slice(0, 14).forEach(function (e) {
-      html += '<button class="rel" data-jump="' + escapeHtml(e.t) + '">' + escapeHtml((byId[e.t] || {}).name || e.t) + ' <small>' + escapeHtml(e.k) + '</small></button>';
-    });
-    html += '</div>';
+    if (n.tags.length) html += '<div>' + n.tags.map(function (tag) { return '<span class="badge">' + escapeHtml(tag) + '</span>'; }).join('') + '</div>';
+    html += '<p>' + (n.summary ? escapeHtml(n.summary) : '<i>' + escapeHtml(chrome('noDescription')) + '</i>') + '</p>';
+    html += '<div class="rels"><b>' + escapeHtml(chrome('incomingPrefix') + incoming.length + ')') + '</b><br>'
+      + relListHtml(incoming, 's')
+      + '<br><b>' + escapeHtml(chrome('outgoingPrefix') + outgoing.length + ')') + '</b><br>'
+      + relListHtml(outgoing, 't')
+      + '</div>';
     detail.innerHTML = html;
     Array.prototype.forEach.call(detail.querySelectorAll('[data-jump]'), function (btn) {
       btn.addEventListener('click', function () { selectNode(btn.dataset.jump); });
@@ -350,13 +490,13 @@
     layersEl.appendChild(row);
   });
   var tourEl = document.getElementById('tour');
-  (DATA.tour || []).slice(0, 12).forEach(function (t) {
+  (DATA.tour || []).slice(0, 12).forEach(function (step) {
     var d = document.createElement('div');
     d.className = 'tour-step';
-    d.innerHTML = '<b>' + escapeHtml(t.title) + '</b>' + escapeHtml(t.description);
+    d.innerHTML = '<b>' + escapeHtml(step.title) + '</b>' + escapeHtml(step.description);
     tourEl.appendChild(d);
   });
-  if (!(DATA.tour || []).length) tourEl.innerHTML = '<div class="tour-step">No tour yet.</div>';
+  if (!(DATA.tour || []).length) tourEl.innerHTML = '<div class="tour-step">' + escapeHtml(chrome('noTour')) + '</div>';
 
   function refreshVisibility() {
     var q = (document.getElementById('search').value || '').trim().toLowerCase();
@@ -382,7 +522,7 @@
   document.getElementById('labels').addEventListener('click', function () {
     showLabels = !showLabels;
     this.classList.toggle('active', showLabels);
-    Array.prototype.forEach.call(nodeLayer.querySelectorAll('text'), function (t) { t.style.display = showLabels ? '' : 'none'; });
+    Array.prototype.forEach.call(nodeLayer.querySelectorAll('text'), function (label) { label.style.display = showLabels ? '' : 'none'; });
   });
 
   var drag = null;
@@ -399,9 +539,9 @@
   });
   svg.addEventListener('pointermove', function (ev) {
     if (!drag) {
-      var t = ev.target.closest ? ev.target.closest('.node') : null;
-      if (t) {
-        var n = byId[t.dataset.id];
+      var target = ev.target.closest ? ev.target.closest('.node') : null;
+      if (target) {
+        var n = byId[target.dataset.id];
         tooltip.style.display = 'block';
         tooltip.style.left = (ev.clientX + 12) + 'px';
         tooltip.style.top = (ev.clientY + 12) + 'px';
@@ -425,6 +565,12 @@
     }
   });
   svg.addEventListener('pointerup', function () { drag = null; svg.classList.remove('dragging'); });
+  svg.addEventListener('keydown', function (ev) {
+    if ((ev.key === 'Enter' || ev.key === ' ') && ev.target.closest && ev.target.closest('.node')) {
+      ev.preventDefault();
+      selectNode(ev.target.closest('.node').dataset.id);
+    }
+  });
   svg.addEventListener('pointerleave', function () { tooltip.style.display = 'none'; });
   svg.addEventListener('wheel', function (ev) {
     ev.preventDefault();

@@ -1,7 +1,7 @@
 {
   "name": "dsh-understand-anything",
-  "version": "0.1.0",
-  "description": "Native DSH port of Understand Anything: deterministic codebase knowledge graph, impact-aware queries and a self-contained dashboard in .ua/knowledge-graph.json format. · 把 Understand Anything 的核心能力移植成 dsh 插件：确定性扫描建图、按图问答、变更影响分析与离线图谱页。",
+  "version": "0.2.0",
+  "description": "Codebase knowledge graphs for DSH: deterministic scanning, impact-aware queries, guided tours and an offline dashboard.",
   "type": "module",
   "main": "index.js",
   "exports": {
@@ -27,7 +27,8 @@
   },
   "scripts": {
     "test": "node --test test/*.test.mjs",
-    "check": "node --test test/*.test.mjs && npm pack --dry-run"
+    "check": "node --test test/*.test.mjs && npm pack --dry-run",
+    "release-gate": "node scripts/release-gate.mjs"
   },
   "dsh": {
     "bundle": {

@@ -12,10 +12,9 @@
 
 import { execFileSync } from 'node:child_process';
 import { resolve } from 'node:path';
-import { buildGraph, loadGraph, readConfig, saveGraph } from '../lib/graph.mjs';
+import { loadGraph, readConfig } from '../lib/graph.mjs';
 import { gitHead } from '../lib/git.mjs';
-import { scanProject } from '../lib/scanner.mjs';
-import { DEFAULTS } from '../lib/util.mjs';
+import { refreshCodeGraph } from '../lib/lifecycle.mjs';
 
 function findGitRoot() {
   try {
@@ -32,22 +31,15 @@ async function main() {
   const config = await readConfig(root);
   if (config.autoUpdate !== true) return;
   const previous = await loadGraph(root);
-  if (!previous) return;
+  if (!previous || previous.kind === 'knowledge') return;
 
   const head = await gitHead(root);
   // A graph recorded against this exact HEAD needs no structural refresh.
   if (head && previous.project?.gitCommitHash === head) return;
 
-  const scan = await scanProject(root, {
-    maxFiles: Number(config.maxFiles) || DEFAULTS.maxFiles,
-    maxFileBytes: Number(config.maxFileBytes) || DEFAULTS.maxFileBytes,
-  });
-  const graph = buildGraph(root, scan, {
-    previous,
-    language: config.language ?? DEFAULTS.language,
-    gitCommitHash: head,
-  });
-  await saveGraph(root, graph);
+  const refreshed = await refreshCodeGraph(root, { previous, config });
+  if (!refreshed.ok) return;
+  const { graph } = refreshed;
   process.stderr.write(
     `[dsh-understand-anything] graph refreshed: ${graph.meta.stats.files} files, ` +
     `${graph.meta.stats.rebuiltNodes} rebuilt\n`,

@@ -43,10 +43,10 @@ function fakeCtx() {
   return { ctx, tools, skills };
 }
 
-const call = async (tools, toolName, args = {}) => {
+const call = async (tools, toolName, args = {}, exec = {}) => {
   const tool = tools.get(toolName);
   assert.ok(tool, `missing tool ${toolName}`);
-  const rendered = await tool.execute(args, { signal: undefined });
+  const rendered = await tool.execute(args, exec);
   assert.equal(typeof rendered, 'string');
   const content = tool.output.render(args, rendered);
   assert.equal(content[0].type, 'text');
@@ -68,7 +68,7 @@ async function fixture() {
 test('apply(): registers 14 wire-level tools and 8 embedded skills', () => {
   assert.equal(name, 'dsh-understand-anything');
   const { ctx, tools, skills } = fakeCtx();
-  apply(ctx, { language: 'zh' });
+  apply(ctx, { language: 'zh', experimental: true });
   assert.deepEqual([...tools.keys()].sort(), [
     'ua_annotate', 'ua_auto_update', 'ua_config', 'ua_dashboard', 'ua_diff',
     'ua_domain', 'ua_explain', 'ua_figma', 'ua_hook', 'ua_knowledge',
@@ -140,12 +140,17 @@ test('end-to-end tool flow on a fixture project', async () => {
     assert.ok(after.matches.some((m) => m.summary === '认证入口'));
 
     const impact = await call(tools, 'ua_diff', { root });
-    assert.equal(impact.ok, true);
-    assert.ok(Array.isArray(impact.upstreamEdges));
+    assert.equal(impact.ok, false);
+    assert.equal(impact.error, 'GIT_UNAVAILABLE');
 
     const tour = await call(tools, 'ua_tour', { root, refresh: true });
     assert.equal(tour.ok, true);
     assert.ok(tour.steps.length > 0);
+    // Small fixture: everything fits in the default page, so nothing is truncated.
+    assert.equal(tour.totalSteps, tour.steps.length);
+    assert.equal(tour.truncated, false);
+    assert.equal(tour.returnedFrom, 1);
+    assert.equal(tour.returnedTo, tour.steps.length);
 
     const dashboard = await call(tools, 'ua_dashboard', { root });
     assert.equal(dashboard.ok, true);
@@ -172,7 +177,8 @@ test('tool argument validation is reported as a normal result', async () => {
     assert.ok(unknown.violations.some((v) => v.includes('nope')));
     const noGraph = await call(tools, 'ua_query', { root, query: 'x' });
     assert.equal(noGraph.ok, false);
-    assert.match(noGraph.error, /NO_GRAPH/);
+    assert.equal(noGraph.error, 'NO_GRAPH');
+    assert.ok(typeof noGraph.hint === 'string' && noGraph.hint.length > 0);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -199,7 +205,7 @@ test('ua_domain: prepare → analysis → domain dashboard', async () => {
   const root = await fixture();
   try {
     const { ctx, tools } = fakeCtx();
-    apply(ctx, {});
+    apply(ctx, { experimental: true });
     await call(tools, 'ua_scan', { root });
     const prepared = await call(tools, 'ua_domain', { root, prepare: true });
     assert.equal(prepared.ok, true);
@@ -240,11 +246,16 @@ test('ua_knowledge: wiki detection, deterministic graph and enrichment', async (
     await writeFile(join(wiki, 'Beta.md'), '# Beta\nBack to [[Alpha]].\n');
     await writeFile(join(wiki, 'raw/paper.pdf'), 'binary');
     const { ctx, tools } = fakeCtx();
-    apply(ctx, {});
+    apply(ctx, { experimental: true });
     const prepared = await call(tools, 'ua_knowledge', { root: wiki, prepare: true });
     assert.equal(prepared.ok, true);
     assert.equal(prepared.kind, 'knowledge');
     assert.ok(prepared.stats.articles >= 2);
+    // Prepare is a bounded context, not the whole graph: no nodes/edges dump.
+    assert.equal(prepared.graph, undefined);
+    assert.ok(prepared.sample.articles.length >= 2);
+    assert.ok(prepared.sample.articles.every((a) => a.id.startsWith('article:')));
+    assert.deepEqual(Object.keys(prepared.analysisSchema).sort(), ['claims', 'entities', 'relations']);
 
     const saved = await call(tools, 'ua_knowledge', {
       root: wiki,
@@ -273,7 +284,7 @@ test('ua_figma: missing token, invalid key, and a mocked successful scan', async
   const previousFetch = globalThis.fetch;
   try {
     const { ctx, tools } = fakeCtx();
-    apply(ctx, {});
+    apply(ctx, { experimental: true });
     delete process.env.FIGMA_TOKEN;
     const missing = await call(tools, 'ua_figma', { root, urlOrKey: 'https://www.figma.com/file/abcdefghijkl/Title' });
     assert.equal(missing.error, 'FIGMA_TOKEN_MISSING');
@@ -347,4 +358,188 @@ test('ua_auto_update and ua_hook on a non-git directory', async () => {
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+
+test('code scans and auto-update preserve existing knowledge graphs', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'ua-protect-wiki-'));
+  try {
+    const { saveGraph } = await import('../lib/graph.mjs');
+    await saveGraph(root, { kind: 'knowledge', project: {}, nodes: [], edges: [], layers: [], tour: [], meta: {} });
+    const path = join(root, '.ua/knowledge-graph.json');
+    const before = await readFile(path, 'utf8');
+    const { ctx, tools } = fakeCtx(); apply(ctx);
+    assert.equal((await call(tools, 'ua_scan', { root, full: true })).error, 'KNOWLEDGE_GRAPH_EXISTS');
+    assert.equal((await call(tools, 'ua_auto_update', { root })).reason, 'NOT_CODE_GRAPH');
+    assert.equal(await readFile(path, 'utf8'), before);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('normalized scan scopes produce canonical node paths', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'ua-scope-normalize-'));
+  try {
+    await mkdir(join(root, 'src')); await writeFile(join(root, 'src/a.js'), 'export const a = 1');
+    const { ctx, tools } = fakeCtx(); apply(ctx);
+    for (const scope of ['.', 'src/../src', join(root, 'src')]) {
+      const result = await call(tools, 'ua_scan', { root, scope });
+      assert.equal(result.ok, true);
+      const graph = JSON.parse(await readFile(result.path, 'utf8'));
+      assert.ok(graph.nodes.some((n) => n.id === 'file:src/a.js'), scope);
+    }
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('ua_tour: bounded steps, truncation flags and from/limit pagination', async () => {
+  // Many tiny files: buildTour chunks 6 files per step, so ~200 files => ~34 steps,
+  // which is above the default page of 20 and below the limit cap of 100.
+  const root = await mkdtemp(join(tmpdir(), 'ua-tour-bound-'));
+  try {
+    await mkdir(join(root, 'src'), { recursive: true });
+    for (let i = 0; i < 200; i++) {
+      await writeFile(join(root, 'src', `f${String(i).padStart(3, '0')}.js`), `export const v = ${i};\n`);
+    }
+    const { ctx, tools } = fakeCtx(); apply(ctx);
+    const scanned = await call(tools, 'ua_scan', { root, full: true, language: 'en' });
+    assert.equal(scanned.ok, true);
+    assert.ok(scanned.tourSteps > 20, `fixture tour should exceed the default page, got ${scanned.tourSteps}`);
+
+    // Default call: first 20 steps only, explicitly marked as truncated.
+    const dflt = await call(tools, 'ua_tour', { root });
+    assert.equal(dflt.ok, true);
+    assert.equal(dflt.totalSteps, scanned.tourSteps);
+    assert.equal(dflt.steps.length, 20);
+    assert.equal(dflt.returnedFrom, 1);
+    assert.equal(dflt.returnedTo, 20);
+    assert.equal(dflt.truncated, true);
+    assert.match(dflt.hint, /ua_dashboard/);
+
+    // The default page is a legal prefix of the full tour, so old callers stay valid.
+    const full = await call(tools, 'ua_tour', { root, limit: 100 });
+    assert.equal(full.totalSteps, scanned.tourSteps);
+    assert.equal(full.steps.length, scanned.tourSteps);
+    assert.equal(full.truncated, false);
+    assert.equal(full.returnedTo, scanned.tourSteps);
+    assert.equal(full.hint, undefined);
+    assert.deepEqual(dflt.steps, full.steps.slice(0, 20));
+
+    // Second page continues where the first stopped, with no overlap.
+    const page2 = await call(tools, 'ua_tour', { root, from: 21, limit: 20 });
+    assert.equal(page2.returnedFrom, 21);
+    assert.equal(page2.returnedTo, Math.min(40, scanned.tourSteps));
+    assert.deepEqual(page2.steps, full.steps.slice(20, page2.returnedTo));
+    const firstIds = new Set(dflt.steps.map((s) => s.order));
+    assert.ok(page2.steps.every((s) => !firstIds.has(s.order)));
+
+    // An explicit small limit also truncates.
+    const small = await call(tools, 'ua_tour', { root, limit: 5 });
+    assert.equal(small.steps.length, 5);
+    assert.equal(small.returnedFrom, 1);
+    assert.equal(small.returnedTo, 5);
+    assert.equal(small.truncated, true);
+
+    // Out-of-range limit is clamped to the cap, not an error: the whole 34-step
+    // tour comes back and truncated is false because nothing was dropped.
+    const greedy = await call(tools, 'ua_tour', { root, limit: 500 });
+    assert.equal(greedy.ok, true);
+    assert.equal(greedy.steps.length, scanned.tourSteps);
+    assert.equal(greedy.truncated, false);
+    assert.equal(greedy.returnedTo, scanned.tourSteps);
+
+    // from past the end returns an empty page, still flagged as incomplete.
+    const beyond = await call(tools, 'ua_tour', { root, from: scanned.tourSteps + 10 });
+    assert.equal(beyond.ok, true);
+    assert.deepEqual(beyond.steps, []);
+    assert.equal(beyond.totalSteps, scanned.tourSteps);
+    assert.equal(beyond.returnedFrom, 0);
+    assert.equal(beyond.returnedTo, 0);
+    assert.equal(beyond.truncated, true);
+    assert.match(beyond.hint, /past the end/);
+
+    // refresh rebuilds and persists in full, but the response stays bounded.
+    const refreshed = await call(tools, 'ua_tour', { root, refresh: true, limit: 3 });
+    assert.equal(refreshed.ok, true);
+    assert.equal(refreshed.refreshed, true);
+    assert.equal(refreshed.steps.length, 3);
+    assert.equal(refreshed.totalSteps, scanned.tourSteps);
+    assert.equal(refreshed.truncated, true);
+    assert.match(refreshed.hint, /rebuilt/i);
+    const stored = JSON.parse(await readFile(join(root, '.ua/knowledge-graph.json'), 'utf8'));
+    assert.equal(stored.tour.length, scanned.tourSteps);
+
+    // Non-positive integers are rejected by the shared integer() validation.
+    const badLimit = await call(tools, 'ua_tour', { root, limit: 0 });
+    assert.equal(badLimit.ok, false);
+    assert.equal(badLimit.error, 'INVALID_ARGUMENTS');
+    assert.ok(badLimit.violations.some((v) => v.includes('limit')));
+
+    const badFrom = await call(tools, 'ua_tour', { root, from: 0 });
+    assert.equal(badFrom.ok, false);
+    assert.equal(badFrom.error, 'INVALID_ARGUMENTS');
+    assert.ok(badFrom.violations.some((v) => v.includes('from')));
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('ua_tour: an empty stored tour returns an empty page, not an error', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'ua-tour-empty-'));
+  try {
+    const { saveGraph } = await import('../lib/graph.mjs');
+    await saveGraph(root, { project: {}, nodes: [], edges: [], layers: [], tour: [], meta: {} });
+    const { ctx, tools } = fakeCtx(); apply(ctx);
+    const empty = await call(tools, 'ua_tour', { root });
+    assert.equal(empty.ok, true);
+    assert.deepEqual(empty.steps, []);
+    assert.equal(empty.totalSteps, 0);
+    assert.equal(empty.returnedFrom, 0);
+    assert.equal(empty.returnedTo, 0);
+    assert.equal(empty.truncated, false);
+    assert.equal(empty.hint, undefined);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('boundary: ua_tour from/limit are positive integers only, no string coercion', async () => {
+  // checkArgs rejects floats/strings before the tool itself ever clamps,
+  // so from:'21' or from:21.5 must be INVALID_ARGUMENTS, not a silent coerce.
+  const root = await mkdtemp(join(tmpdir(), 'ua-tour-boundary-'));
+  try {
+    await mkdir(join(root, 'src'), { recursive: true });
+    await writeFile(join(root, 'src', 'a.js'), 'export const a = 1;\n');
+    const { ctx, tools } = fakeCtx(); apply(ctx);
+    await call(tools, 'ua_scan', { root, full: true });
+    for (const [args, key] of [
+      [{ root, limit: '20' }, 'limit'],
+      [{ root, limit: 5.5 }, 'limit'],
+      [{ root, limit: true }, 'limit'],
+      [{ root, from: '21' }, 'from'],
+      [{ root, from: 21.5 }, 'from'],
+      [{ root, from: -1 }, 'from'],
+      [{ root, limit: -1 }, 'limit'],
+    ]) {
+      const out = await call(tools, 'ua_tour', args);
+      assert.equal(out.ok, false, `should reject ${JSON.stringify(args)}`);
+      assert.equal(out.error, 'INVALID_ARGUMENTS');
+      assert.ok(out.violations.some((v) => v.includes(key)), `violation mentions ${key}: ${out.violations}`);
+    }
+    // boundary values pass
+    const ok = await call(tools, 'ua_tour', { root, limit: 1, from: 1 });
+    assert.equal(ok.ok, true);
+    assert.equal(ok.steps.length, 1);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('boundary: an aborted signal surfaces SCAN_CANCELLED with cancelled:true', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'ua-abort-'));
+  try {
+    await mkdir(join(root, 'src'), { recursive: true });
+    await writeFile(join(root, 'src', 'a.js'), 'export const a = 1;\n');
+    const { ctx, tools } = fakeCtx(); apply(ctx);
+    const cancelled = await call(tools, 'ua_scan', { root }, { signal: AbortSignal.abort() });
+    assert.equal(cancelled.ok, false);
+    assert.equal(cancelled.error, 'SCAN_CANCELLED');
+    assert.equal(cancelled.cancelled, true);
+    // a non-scanning tool on the same aborted signal must NOT be SCAN_CANCELLED
+    // (it is not a scan; it should not inherit scan-cancel semantics)
+    await call(tools, 'ua_scan', { root, full: true });
+    const tourCancelled = await call(tools, 'ua_tour', { root }, { signal: AbortSignal.abort() });
+    assert.notEqual(tourCancelled.error, 'SCAN_CANCELLED', `read-only tour must not masquerade as a cancelled scan (got ${tourCancelled.error})`);
+  } finally { await rm(root, { recursive: true, force: true }); }
 });

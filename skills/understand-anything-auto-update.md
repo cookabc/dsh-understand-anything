@@ -1,6 +1,6 @@
 ---
 name: understand-anything-auto-update
-description: 让知识图谱跟着每次提交自动增量更新，或在会话开始时检查并刷新过期图谱。对应 Understand Anything 的 post-commit hook 与 SessionStart 过期检查。
+description: 让知识图谱跟着每次提交自动增量更新，或在会话开始时检查并刷新过期图谱。
 whenToUse: 用户想开启/关闭提交后自动更新，或会话里发现图谱落后于代码时。
 ---
 
@@ -21,7 +21,7 @@ hook 的行为：每次 commit 后调用插件自带的 `bin/ua-post-commit.mjs`
 
 > hook 里记录了插件源码的绝对路径；如果移动了插件目录，重新执行一次 `ua_hook({ "action": "install" })`。
 
-**B. 会话内检查（等价于上游 SessionStart 检查）**
+**B. 会话内检查**
 
 每次开始在这个项目里按图问答前：
 
@@ -34,3 +34,5 @@ hook 的行为：每次 commit 后调用插件自带的 `bin/ua-post-commit.mjs`
 - `autoUpdate` 默认关闭，必须显式开启；卸载 / disable 会一并关掉。
 - 增量只更新结构层，模型写过的 `summary` / `tags` / `layer` 会保留。
 - 自动更新只覆盖代码图谱；domain / knowledge / design 图谱需要各自重新生成。
+
+自动更新沿用原图谱的 scope；扫描不完整时保留上一份图谱。源码改变后保留的注释会标记为待复核。新鲜度按已扫描内容比较，不仅比较 Git HEAD。

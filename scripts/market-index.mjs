@@ -111,7 +111,7 @@ const index = {
     title: { en: 'Understand Anything', zh: 'Understand Anything' },
     description: {
       en: 'Native DSH port of Understand Anything: deterministic knowledge graph, impact-aware queries, business-domain flows, wiki and Figma graphs, and a self-contained dashboard.',
-      zh: 'Understand Anything 的 dsh 原生移植：确定性知识图谱、影响面分析、业务域流程、知识库与 Figma 图谱，以及单文件离线界面。',
+      zh: '确定性代码知识图谱、影响面分析、业务域流程、知识库与 Figma 图谱，以及单文件离线界面。',
     },
     author: repoWebUrl?.match(/github\.com\/([^/]+)\//)?.[1] ?? undefined,
     ...(repoWebUrl ? { homepage: repoWebUrl, repository: { url: repoWebUrl } } : {}),

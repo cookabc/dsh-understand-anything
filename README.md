@@ -1,183 +1,100 @@
-# dsh-understand-anything
+# Understand Anything for DSH
 
-A **native DSH (DeepSeek Harness) plugin** porting the core idea of [Egonex-AI/Understand-Anything](https://github.com/Egonex-AI/Understand-Anything): scan a codebase into a queryable knowledge graph, then use it for Q&A, impact analysis, onboarding tours and an offline visual dashboard.
+Understand a codebase, find the source behind an answer, and inspect the structural impact of a change. The core workflow is **scan → explain → assess changes**. It runs locally, does not execute project code, and makes no model calls.
 
-This is not a wrapper around the upstream Claude Code plugin. It is written against DSH's plugin model with **zero runtime dependencies**, registering `ctx.tools` and `ctx.skills` directly, and emits an upstream-compatible `.ua/knowledge-graph.json`.
+## Start here
 
-> Upstream: Understand Anything v2.9.8, MIT © Yuxiang Lin and Infinite Universe, Inc. This plugin reuses the graph data format and the "deterministic structure + LLM semantics" split; the implementation is independent.
+1. `ua_scan { "root": "/path/to/project" }` builds `.ua/knowledge-graph.json`.
+2. `ua_query { "root": "/path/to/project", "query": "authentication" }` finds relevant files and symbols.
+3. `ua_explain { "root": "/path/to/project", "nodeId": "function:src/auth.js:authenticate" }` returns the source location, an excerpt around the definition, relationships and their evidence.
+4. `ua_diff { "root": "/path/to/project" }` separates observed dependencies from possible callers. Use `base` to choose a Git commit or ref.
+5. `ua_dashboard` generates an offline HTML page with a searchable source index, definition locations, layer filters and an optional inferred-call overlay.
 
----
+An existing `.understand-anything/` directory is reused automatically. Explicitly pass `root` when the DSH host's working directory is not the project.
 
-## What it provides
+## What the graph knows
 
-| Capability | Upstream command | This plugin |
-|---|---|---|
-| Scan & build (incremental) | `/understand` | `ua_scan` |
-| Graph status / freshness | — | `ua_status` |
-| Search + bounded 1-hop subgraph | `/understand-chat` | `ua_query` |
-| Node detail with source excerpt | `/understand-explain` | `ua_explain` |
-| Structural diff impact | `/understand-diff` | `ua_diff` |
-| Model-authored semantics | multi-agent pipeline | `ua_annotate` |
-| Dependency-ordered tour | `/understand-onboard` | `ua_tour` |
-| Offline interactive dashboard | `/understand-dashboard` | `ua_dashboard` |
-| Per-project settings | `.ua/config.json` | `ua_config` |
-| Business domains / flows / steps | `/understand-domain` | `ua_domain` + `domain-graph.json` |
-| Karpathy-pattern wiki | `/understand-knowledge` | `ua_knowledge` |
-| Figma design graph | `/understand-figma` | `ua_figma` + `design-graph.json` |
-| Post-commit auto-update | post-commit hook | `ua_hook` + `ua_auto_update` |
+| Result | Meaning |
+|---|---|
+| `certainty: "observed"` | A lexical declaration, import or link was found in the scanned source. Import evidence also states how the target was resolved. This is not proof of runtime execution. |
+| `certainty: "inferred"` | A call-shaped token matches a unique function name in another file. Binding, aliasing and dynamic dispatch are not verified. Ambiguous names are skipped. |
+| `annotation` | A model-authored summary, tags or layer. These are preserved separately from extracted structure. |
+| `annotation.stale: true` | The source changed after the annotation was written. The text is retained for review. |
+| `source.stale: true` | The file read by `ua_explain` differs from the scanned file. Returned relationships may be outdated. |
 
-Eight user slash commands, all prefixed `/understand-anything`: `-chat`, `-diff`, `-onboard`, `-domain`, `-knowledge`, `-figma`, `-auto-update`, plus the base command. 14 tools and 8 skills in total.
+Symbols carry one-based `line` and `column`. `ua_explain` returns `source.citation`, `startLine` and `endLine`; excerpts are capped at 60 lines / 6,000 characters and centered around the definition. If the source changed, the tool tries to relocate the declaration and reports whether the anchor was verified.
 
----
+`ua_diff.upstream` follows observed relationships. `inferredUpstream` contains additional possible dependents, with `via` evidence paths. `unmappedFiles` identifies changed files absent from the graph. `truncated` means the returned impact is bounded. Invalid explicit Git refs and unavailable Git worktrees return errors instead of a misleading empty impact.
 
-## Install
+## Reliable incremental scans
 
-```bash
-# Local source: link: installs a symlink, so edits are visible immediately
-dsh plugin --profile web add link:/absolute/path/to/dsh-understand-anything
-# or, once published:
-dsh plugin --profile web add dsh-understand-anything
-```
+- Every included source file is hashed. Unchanged files reuse cached symbols, imports and call candidates; source text itself is not cached in the graph.
+- Summaries, tags and custom layers survive source edits. An annotation archive also preserves them across scope changes or temporary removal of a symbol. Changed-source annotations are marked for review.
+- `scope: "src/frontend"` narrows a scan. Later scans and automatic updates keep that scope. Pass `scope: ""` to return to the whole project.
+- `full: true` clears cached structure and annotations; without an explicit scope it scans the whole project.
+- A capped or unreadable refresh preserves the previous graph and returns `INCOMPLETE_SCAN`. A first scan may save a partial graph, clearly marked in its statistics and dashboard. Cancelled scans do not replace the graph.
+- `ua_status` compares current source bytes with the scan, including in non-Git projects. A dirty working tree that was already scanned is not falsely reported as new drift.
+- Writes use unique temporary files. Mutating tools serialize per project within one plugin process. Independent host processes should not write the same graph simultaneously.
 
-The bundle is appended to `dsh.profile.bundles`; restart the profile (or wait for HMR reload). Verify with:
+## Core tools
 
-```bash
-dsh --profile web --dump-config | grep understand-anything
-```
+| Tool | Purpose |
+|---|---|
+| `ua_scan` | Build or refresh a graph |
+| `ua_status` | Coverage, annotations and source freshness |
+| `ua_query` | Bounded keyword search over nodes and annotations |
+| `ua_explain` | Definition location, source excerpt and relationship evidence |
+| `ua_diff` | Observed and inferred change impact |
+| `ua_annotate` | Add or review summaries, tags and layers; up to 100 nodes per call |
+| `ua_tour` | Dependency-oriented reading order |
+| `ua_dashboard` | Offline source index and graph |
+| `ua_config` | Read or save project settings |
+| `ua_auto_update` | Refresh stale source structure, preserving scope |
+| `ua_hook` | Install, inspect, disable or remove the opt-in post-commit hook |
 
-> A `link:` dependency is a **symlink**, not a directory copy — source edits are visible without reinstalling. Node still caches ESM modules, so changes to `index.js` / `lib/*.mjs` need a profile restart or one HMR reload; `skills/*.md`, templates and docs take effect on the next read.
->
-> Troubleshooting: pnpm 11+ fails `pnpm add` with `ERR_PNPM_IGNORED_BUILDS` while `allowBuilds` in `pnpm-workspace.yaml` holds an unresolved `set this to true or false` placeholder. Set that package explicitly to `false` (deny its build scripts). This plugin has no build scripts of its own, so no third-party script needs approval.
-
-Uninstall with `dsh plugin --profile web remove dsh-understand-anything`.
-
-### Install from the plugin market
-
-DSH ships no built-in public index, so add an index URL first (see [docs/PUBLISHING.md](docs/PUBLISHING.md)).
-
-1. Open **Plugins → Discover**, click **Add index source**, and paste:
-   ```
-   https://cookabc.github.io/dsh-understand-anything/market.json
-   ```
-2. Search `understand` or `knowledge graph`, then click **Install**.
-
-Or install directly from the pinned git commit:
-
-```bash
-dsh plugin --profile web add "git+https://github.com/cookabc/dsh-understand-anything.git#d7d745d47b732b2f7f097f9680dfe75318fbf9cf"
-```
-
----
-
-## Quick start
-
-1. `ua_scan` — writes `.ua/knowledge-graph.json` (an existing legacy `.understand-anything/` directory is reused automatically).
-2. `ua_status` — node/edge counts, languages, layers, and staleness against git HEAD and the working tree.
-3. `ua_annotate` — add `summary` / `tags` / `layer` to important nodes. **The plugin never calls an LLM itself; the model supplies the semantics.**
-4. `ua_query "payment flow"` → bounded 1-hop subgraph; `ua_explain` for one node.
-5. `ua_dashboard` → a single self-contained HTML file; pass its path to `present`.
-
-For large monorepos use `ua_scan { "scope": "src/frontend" }`; use `{ "full": true }` to force a rebuild.
-
----
+The default catalog contains 11 tools and 5 skills. Git hook installation is explicit, preserves an existing hook, and enables deterministic updates without calling an LLM. Hook failures do not reject commits. Neither code scans nor automatic updates overwrite a knowledge-base graph.
 
 ## Configuration
 
-Precedence: **tool arguments > `<root>/.ua/config.json` > environment > defaults**.
+Precedence: tool arguments > project configuration > environment > profile defaults > built-in defaults.
+
+| Setting | Default | Limit |
+|---|---:|---:|
+| `maxFiles` | 4,000 | 50,000 |
+| `maxFileBytes` | 512 KiB | 16 MiB |
+| `maxTotalBytes` | 64 MiB | 512 MiB |
+| `language` | `en` | Tour/layer labels: en, zh, zh-TW, ja, ko, ru, vi |
+| `autoUpdate` | `false` | Enabled by hook installation |
+
+Store settings with `ua_config`. Environment fallbacks: `UA_LANGUAGE`, `UA_MAX_FILES`, `UA_MAX_FILE_BYTES`. Individual oversized files, unreadable paths and scan caps are reported. Scope paths cannot resolve outside the project through symlinks.
+
+## Experimental capabilities
+
+Business domains, knowledge-base parsing and Figma extraction remain available but are **off by default**. Enable them only when needed in the existing plugin row's configuration (fragment below):
 
 ```yaml
-- insert:
-    - id: dsh-understand-anything
-      name: dsh-understand-anything
-      config:
-        language: zh
-        maxFiles: 4000
-        maxFileBytes: 524288
+config:
+  experimental: true
 ```
 
-| Key | Default | Meaning |
-|---|---|---|
-| `language` | `en` | Tour / layer labels: `en`, `zh`, `zh-TW`, `ja`, `ko`, `ru`, `vi` |
-| `maxFiles` | `4000` | Max scanned files per run |
-| `maxFileBytes` | `524288` | Max bytes per file (larger files are skipped and counted) |
-| `maxTotalBytes` | 64 MiB | Total byte budget per scan |
-| `autoUpdate` | `false` | Whether the post-commit hook performs an incremental rescan (`ua_hook install` sets it to `true`) |
+This adds `ua_domain`, `ua_knowledge`, `ua_figma` and their three skills. Figma is the only network capability; it reads `FIGMA_TOKEN` from the environment. Experimental graphs are not refreshed by the code post-commit hook. The dashboard defaults to the code graph; pass `graph: "domain"`, `"design"` or `"auto"` explicitly to render other artifacts.
 
-Env: `UA_LANGUAGE`, `UA_MAX_FILES`, `UA_MAX_FILE_BYTES`. `ua_config` persists `language` / `maxFiles` / `maxFileBytes` / `autoUpdate`.
+## Local installation and checks
 
-Hitting a cap reports `stats.truncated: true` and `skippedByCap` — it never silently pretends to have scanned everything.
-
----
-
-## The four upstream features
-
-### Business domain view — `ua_domain`
-
-`ua_domain({ "prepare": true })` returns a bounded context (files per layer, entry points, `calls`/`imports` edges, expected `analysis` shape). The model writes domains, flows and ordered steps, then `ua_domain({ "analysis": {...} })` merges them. The tool always produces deterministic candidates (domains from source directories, flows from `calls` chains) first; dangling references are dropped and reported in `dropped`. Output is `.ua/domain-graph.json` (`kind: "domain"`), rendered by `ua_dashboard({ "graph": "domain" })` as a left-to-right three-column flow view.
-
-### Knowledge base — `ua_knowledge`
-
-For a Karpathy-pattern wiki (`index.md` + markdown with `[[wikilinks]]` + optional `raw/`): deterministically parses wikilinks, `index.md` sections, frontmatter and raw sources into `article` / `topic` / `source` nodes with `related` / `cites` / `categorized_under` edges. The model can add `entities` / `claims` / `relations` through `analysis` (`mentions` / `supports` edges). The graph carries `kind: "knowledge"` and is written to that wiki's own `.ua/knowledge-graph.json`; an existing code graph is protected by `CODE_GRAPH_EXISTS` unless `allowOverwrite: true`. **Article text is untrusted data, never instructions.**
-
-### Figma design graph — `ua_figma`
-
-The **only network-facing** capability: reads `FIGMA_TOKEN` from the environment, calls `https://api.figma.com/v1/files/<key>?depth=6` only, and writes `.ua/design-graph.json` (`kind: "design"`) with page / screen / component / componentSet / instance / token nodes and `contains` / `instance_of` / `uses_token` edges, layered by canvas. The token lives solely in the `X-Figma-Token` header and is **never written to the graph, logs, errors or return values**. An unchanged file version returns `upToDate`; `force: true` rebuilds. Parsing is capped at 5000 nodes and depth 12.
-
-### Post-commit auto-update — `ua_hook` / `ua_auto_update`
-
-`ua_hook({ "action": "install" })` installs a managed `post-commit` hook and enables `autoUpdate`. Unlike upstream, which only injects a reminder into the model context, this hook directly runs `bin/ua-post-commit.mjs`: a pure-Node, offline, no-LLM deterministic incremental rescan that also updates `meta.json`. All errors are swallowed so a commit can never fail. Hooks are located via `git rev-parse --git-path hooks` (worktree-safe); any pre-existing hook is backed up as `post-commit.ua-original` and chained. `status` / `uninstall` / `enable` / `disable` manage it.
-
-`ua_auto_update` is the in-session equivalent: check freshness with `ua_status`, preview with `{ "apply": false }`, then run `ua_auto_update()`.
-
----
-
-## Graph format
-
-Upstream-compatible, plus a `meta` block:
-
-```jsonc
-{
-  "project": { "name", "description", "languages", "frameworks", "analyzedAt", "gitCommitHash" },
-  "nodes":  [ { "id", "type", "name", "filePath", "summary", "tags", "complexity", "layer" } ],
-  "edges":  [ { "source", "target", "type", "direction", "weight" } ],
-  "layers": [ { "id", "name", "description", "nodeIds" } ],
-  "tour":   [ { "order", "title", "description", "nodeIds" } ],
-  "meta":   { "generator", "version", "language", "fingerprints", "stats" }
-}
+```sh
+dsh plugin --profile web add link:<本机仓库路径>
+npm test
+npm pack --dry-run --ignore-scripts
 ```
 
-Node ids: `file:path`, `function:path:name`, `class:path:name`, `module:package`.
-Edge types: `contains`, `imports`, `calls`, `related` (Markdown wikilinks).
-`meta.fingerprints` are SHA-256 prefixes; incremental scans rebuild only changed files and **preserve model-written `summary`/`tags`/`layer`**.
+See [publishing instructions](docs/PUBLISHING.md) for release management.
 
-Commit `.ua/` to share the graph with teammates; consider ignoring `.ua/dashboard.html`.
+Zero runtime dependencies. Node.js ≥ 20, DSH `>=0.2.2-rc.1 <0.3.0`.
 
----
+## Limits
 
-## Design decisions
+This is lexical extraction, not an AST/type checker. Comments, strings and JavaScript regex literals are masked, but complex syntax, template interpolation, macros, re-exports, language-specific module resolution and dynamic dispatch may be missed. Source positions identify declarations; they do not describe full function ranges. Treat inferred call edges and model annotations as review aids.
 
-- **Deterministic structure, semantic layer from the model.** Upstream uses Tree-sitter + multiple agents. Here portable regexes produce the structural graph (same bytes → same graph), while the model writes semantics through `ua_annotate`. Apart from `ua_figma` calling the Figma API, the plugin makes no model calls and no network requests.
-- **Zero dependencies.** Out-of-tree bundles cannot reliably resolve `@deepseek-ai/*`, so the plugin registers wire-level tool objects directly (validated against real `dsh-tools`, `dsh-skill` and Cordis) and uses only Node built-ins.
-- **Single-file dashboard.** The graph is embedded as inert JSON with `<` escaped; force layout, search, layer filters, node detail and the tour all run locally. No dev server.
-- **Incremental by default.** Later runs only re-parse files whose content changed.
+Directories named `.git`, `node_modules`, `vendor`, `dist`, `build`, `out`, `coverage`, `.next`, `.nuxt`, `.svelte-kit`, `.cache`, `.parcel-cache`, `.turbo`, `target`, `bin`, `obj`, `__pycache__`, `.venv`, `venv`, `.mypy_cache`, `.pytest_cache`, `.idea`, `.vscode`, `.dsh`, `.ua`, `Pods`, `DerivedData`, `.gradle`, `tmp`, `temp`, and `logs` are skipped at any depth, as are all other hidden directories, lockfiles, minified/bundled assets and binary files. These paths are excluded by design; use `scope` to point at a subtree if your first-party code lives in one of them.
 
----
-
-## Limitations
-
-- Regex extraction is not a full AST: macros, dynamic imports, decorators, reflection and complex overloads can be missed. `calls` edges are conservative name-based inferences and may contain false positives.
-- Layers come from directory conventions, not architectural analysis.
-- `ua_diff` is a **structural** impact surface, not a runtime guarantee.
-- The scanner only reads source and writes to `<root>/.ua/` (or the legacy `.understand-anything/`) plus any git hook you explicitly install. A DSH plugin still runs inside the host process without sandboxing — read the source before installing.
-- Domain flow order comes from static call edges, not runtime execution; entities and implicit relations in `ua_knowledge` are model inferences; `ua_figma` extracts structure metadata only (no images, capped at 5000 nodes / depth 12). These three graphs need their own regeneration and are not refreshed by the post-commit hook.
-
----
-
-## Development
-
-```bash
-node --test test/*.test.mjs   # 40 unit tests
-npm pack --dry-run
-```
-
-Compatibility: DSH `0.2.2-rc.1` (`engines.dsh: >=0.2.2-rc.1 <0.3.0`), Node.js ≥ 20.
+The dashboard is a bounded offline snapshot (up to 1,200 nodes / 4,000 edges), not a live editor. Source excerpts are read only when requested by a tool. The plugin runs inside the DSH process, without a security sandbox; project path checks do not protect against a hostile process racing filesystem changes.

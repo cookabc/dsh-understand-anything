@@ -328,3 +328,56 @@ test('oversize files and the file cap are skipped and counted', async () => {
     }
   }
 });
+
+test('knowledge: lexical edges are observed, merged analysis edges are model-marked', async () => {
+  // parse a wiki, then merge model analysis; the two groups must be distinguishable.
+  const dir = await mkdtemp(join(tmpdir(), 'ua-kg-origin-'));
+  try {
+    await writeFile(join(dir, 'index.md'), '# Index\n\n## Basics\n\n- [[Alpha]]\n- [[Beta]]\n');
+    await writeFile(join(dir, 'Alpha.md'), '# Alpha\nReferences [[Beta]].\n');
+    await writeFile(join(dir, 'Beta.md'), '# Beta\nSee [[Alpha]] too.\n');
+    const { parseKnowledgeBase, mergeKnowledgeAnalysis } = await import('../lib/knowledge.mjs');
+    const parsed = await parseKnowledgeBase(dir);
+    assert.equal(parsed.ok, true);
+    // lexical phase: every edge is 'observed'
+    assert.ok(parsed.graph.edges.every((e) => e.certainty === 'observed'), `lexical edges first: ${JSON.stringify(parsed.graph.edges[0])}`);
+    assert.ok(parsed.graph.nodes.every((n) => !('origin' in n)), 'lexical nodes carry no origin');
+    // model merge
+    const merged = mergeKnowledgeAnalysis(parsed.graph, {
+      entities: [{ name: 'Graph Theory', article: 'article:Alpha.md' }],
+      claims: [{ text: 'Edges make graphs', article: 'article:Beta.md' }],
+      relations: [{ source: 'article:Alpha.md', target: 'article:Beta.md', type: 'related' }],
+    });
+    const modelEdges = merged.graph.edges.filter((e) => e.certainty === 'model');
+    assert.ok(modelEdges.length >= 2, `model edges marked, got ${JSON.stringify(merged.graph.edges.slice(-3))}`);
+    assert.ok(modelEdges.every((e) => e.origin === 'analysis'));
+    const lexicalEdges = merged.graph.edges.filter((e) => e.certainty === 'observed');
+    assert.ok(lexicalEdges.length >= 1, 'lexical edges survive the sight path unbiased');
+    const entity = merged.graph.nodes.find((n) => n.type === 'entity');
+    assert.equal(entity.origin, 'analysis');
+    const claim = merged.graph.nodes.find((n) => n.type === 'claim');
+    assert.equal(claim.origin, 'analysis');
+    // dashboard view model: model edges must read as inferred (dashed) downstream
+    const { buildViewModel } = await import('../lib/dashboard.mjs');
+    const vm = buildViewModel(merged.graph);
+    const viewModelEdges = vm.edges.filter((e) => e.inferred);
+    assert.ok(viewModelEdges.length >= 1, 'model edges surface as inferred for the page');
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+test('knowledge tool surfaces modelMarked count', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'ua-kg-toolmark-'));
+  try {
+    await writeFile(join(dir, 'index.md'), '# Index\n\n## Basics\n\n- [[Alpha]]\n- [[Beta]]\n');
+    await writeFile(join(dir, 'Alpha.md'), '# Alpha\nReferences [[Beta]].\n');
+    await writeFile(join(dir, 'Beta.md'), '# Beta\nSee [[Alpha]].\n');
+    const { apply } = await import('../index.js');
+    const tools = new Map();
+    apply({ inject(d, cb) { cb({ tools: { register(x) { tools.set(x.name, x); } }, skills: { register() {} } }); } }, { experimental: true });
+    const tool = tools.get('ua_knowledge');
+    const out = JSON.parse(await tool.execute({ root: dir, analysis: { entities: [{ name: 'X' }], claims: [{ text: 'y' }], relations: [{ source: 'article:Alpha.md', target: 'article:Beta.md' }] } }, {}));
+    assert.equal(out.ok, true);
+    assert.ok(out.modelMarked && out.modelMarked.nodes === 2, `modelMarked nodes: ${JSON.stringify(out.modelMarked)}`);
+    assert.ok(typeof out.modelMarked.edges === 'number');
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});

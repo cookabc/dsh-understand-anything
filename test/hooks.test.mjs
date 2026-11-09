@@ -117,3 +117,17 @@ test('ua_hook refuses non-repositories and unknown actions', async () => {
     await rm(root, { recursive: true, force: true });
   }
 });
+
+
+test('hook quotes plugin paths literally instead of evaluating shell substitutions', async () => {
+  const root = await repo();
+  try {
+    const pluginRoot = join(root, "plugin ' $(touch INJECTED)");
+    await mkdir(join(pluginRoot, 'bin'), { recursive: true });
+    await writeFile(join(pluginRoot, 'bin/ua-post-commit.mjs'), "import { writeFileSync } from 'node:fs'; writeFileSync('HOOK_RAN', 'yes');");
+    const installed = await installHook(root, pluginRoot);
+    execFileSync('sh', [installed.hookPath], { cwd: root });
+    assert.equal(await readFile(join(root, 'HOOK_RAN'), 'utf8'), 'yes');
+    await assert.rejects(readFile(join(root, 'INJECTED')), { code: 'ENOENT' });
+  } finally { await rm(root, { recursive: true, force: true }); }
+});

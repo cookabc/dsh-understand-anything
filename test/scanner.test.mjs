@@ -4,9 +4,25 @@ import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { scanProject, extractSymbols, extractImports, resolveImport } from '../lib/scanner.mjs';
-import { classifyLayer, fingerprint, inside, isIgnoredPath, languageOf, safeRoot } from '../lib/util.mjs';
+import { classifyLayer, fingerprint, inside, isIgnoredPath, languageOf, mergeConfig, safeRoot } from '../lib/util.mjs';
 
 const tmp = () => mkdtemp(join(tmpdir(), 'ua-scanner-'));
+
+test('config merge: per-project settings win over environment fallbacks', () => {
+  /* 环境变量是"没有配置文件时的兜底"，不是覆盖项。反过来的话，一个 shell 里
+     导出的 UA_MAX_FILES 会让项目自己写的设置静默失效，而 ua_config 存进去的值
+     看起来像没生效。工具参数在任何情况下都最后应用，那一步不在这里。 */
+  const defaults = { language: 'en', maxFiles: 4000, maxFileBytes: 524288 };
+  const merged = mergeConfig(
+    defaults,
+    { language: 'zh', maxFiles: 10 },
+    { UA_LANGUAGE: 'en', UA_MAX_FILES: '9999', UA_MAX_FILE_BYTES: '111' },
+  );
+  assert.equal(merged.language, 'zh', '配置文件覆盖环境变量');
+  assert.equal(merged.maxFiles, 10, '配置文件覆盖环境变量');
+  assert.equal(merged.maxFileBytes, 111, '配置文件没写的键由环境变量补上');
+  assert.deepEqual(mergeConfig(defaults, null, {}), defaults, '两者都没有时保持默认值');
+});
 
 test('utility: ignore rules, language mapping, path safety', () => {
   assert.equal(isIgnoredPath('node_modules/pkg/index.js'), true);

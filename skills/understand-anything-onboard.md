@@ -1,6 +1,6 @@
 ---
 name: understand-anything-onboard
-description: 基于知识图谱的依赖顺序导览，为新成员生成上手路线。对应 Understand Anything 的 /understand-onboard 与 dashboard 能力。
+description: 基于知识图谱的依赖顺序导览，为新成员生成上手路线。
 whenToUse: 用户要新人指南、onboarding、想按正确顺序读代码，或想打开可视化图谱时。
 ---
 

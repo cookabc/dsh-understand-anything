@@ -1,6 +1,6 @@
 ---
 name: understand-anything-domain
-description: 从代码知识图谱提取业务域、业务流程与流程步骤，生成横向流程视图。对应 Understand Anything 的 /understand-domain。
+description: 从代码知识图谱提取业务域、业务流程与流程步骤，生成横向流程视图。
 whenToUse: 用户想看业务领域划分、梳理某个业务流程、做领域建模或问「这个系统有哪些业务环节」时。
 ---
 

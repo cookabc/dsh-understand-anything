@@ -1,6 +1,6 @@
 ---
 name: understand-anything-figma
-description: 通过 Figma REST API 分析设计文件，生成页面/屏幕/组件/实例/设计令牌的设计知识图谱。对应 Understand Anything 的 /understand-figma。
+description: 通过 Figma REST API 分析设计文件，生成页面/屏幕/组件/实例/设计令牌的设计知识图谱。
 whenToUse: 用户给了 Figma 文件链接或 file key，想把设计稿结构、组件与令牌可视化时。
 ---
 
