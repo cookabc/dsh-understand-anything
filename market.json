@@ -6,7 +6,7 @@
   },
   "description": {
     "en": "Codebase knowledge graphs for DSH: scan, query, impact analysis, domain flows, wikis, Figma and an offline dashboard.",
-    "zh": "把代码库变成可查询的知识图谱：确定性扫描建图、按图问答、影响面分析与离线图谱页。"
+    "zh": "把代码库变成可查询的知识图谱：建图、按图问答、影响面分析、业务域流程、知识库、Figma 与离线图谱页。"
   },
   "metadata": {
     "categories": {
@@ -41,8 +41,8 @@
         "zh": "Understand Anything"
       },
       "description": {
-        "en": "Deterministic codebase knowledge graph, impact-aware queries and a self-contained dashboard.",
-        "zh": "确定性代码知识图谱、影响面分析与单文件离线界面。"
+        "en": "Native DSH port of Understand Anything: deterministic knowledge graph, impact-aware queries, business-domain flows, wiki and Figma graphs, and a self-contained dashboard.",
+        "zh": "确定性代码知识图谱、影响面分析、业务域流程、知识库与 Figma 图谱，以及单文件离线界面。"
       },
       "author": "cookabc",
       "homepage": "https://github.com/cookabc/dsh-understand-anything",
@@ -67,12 +67,12 @@
       },
       "versions": [
         {
-          "version": "0.1.0",
-          "publishTimestamp": 1794066233,
+          "version": "0.2.0",
+          "publishTimestamp": 1794499837,
           "source": {
             "type": "git",
             "url": "https://github.com/cookabc/dsh-understand-anything",
-            "commit": "d7d745d47b732b2f7f097f9680dfe75318fbf9cf"
+            "commit": "765545c0b44e66435a50cbc405d1896a5bfcb8b3"
           },
           "engines": {
             "dsh": ">=0.2.2-rc.1 <0.3.0"
