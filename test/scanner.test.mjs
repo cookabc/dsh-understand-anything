@@ -90,6 +90,40 @@ test('imports: Go block form, aliases and locations', () => {
   assert.deepEqual(extractImports('package main\nimport "fmt"\nfunc main(){}\n', 'go', true), [{ spec: 'fmt', line: 2, column: 1 }]);
 });
 
+test('imports: Rust use trees, aliases, globs and locations', () => {
+  const repro = 'mod a;\nuse std::{\n    collections::HashMap,\n    fs,\n};\nuse serde::Serialize;\n';
+  assert.deepEqual(extractImports(repro, 'rust'), ['std::collections::HashMap', 'std::fs', 'serde::Serialize']);
+  // Nested groups join every leaf with its enclosing prefixes.
+  assert.deepEqual(extractImports('use a::{b::{c, d}, e};', 'rust'), ['a::b::c', 'a::b::d', 'a::e']);
+  // A bare `self` leaf collapses to the root prefix itself.
+  assert.deepEqual(extractImports('use a::{self, b::c};', 'rust'), ['a', 'a::b::c']);
+  // Aliases keep the pre-`as` real path, in trees and on plain lines.
+  assert.deepEqual(extractImports('use a::{b as x, c::d as y};\nuse e::f as z;', 'rust'), ['a::b', 'a::c::d', 'e::f']);
+  // Globs keep the `::*` suffix in the spec.
+  assert.deepEqual(extractImports('use a::*;', 'rust'), ['a::*']);
+  assert.deepEqual(extractImports('use a::{b::*, c};', 'rust'), ['a::b::*', 'a::c']);
+  // Single-line brace trees expand the same way.
+  assert.deepEqual(extractImports('use a::{b, c};', 'rust'), ['a::b', 'a::c']);
+  // Single-line plain paths are unchanged.
+  assert.deepEqual(extractImports('use std::io::Read;\n', 'rust'), ['std::io::Read']);
+  // Comments inside the tree are masked before parsing and never leak into specs.
+  assert.deepEqual(extractImports('use a::{ // note\n    b,\n    /* mid */ c,\n};', 'rust'), ['a::b', 'a::c']);
+  // A `use` statement inside a multi-line string literal is not an import.
+  assert.deepEqual(extractImports('const s = "\nuse fake::{a, b};\n";', 'rust'), []);
+  // Each expanded leaf anchors at its own leading token, not at the `use` keyword.
+  const tree = 'use a::{\n    b::{c, d},\n    self,\n    e as f,\n};\n';
+  assert.deepEqual(extractImports(tree, 'rust', true), [
+    { spec: 'a::b::c', line: 2, column: 9 },
+    { spec: 'a::b::d', line: 2, column: 12 },
+    { spec: 'a', line: 3, column: 5 },
+    { spec: 'a::e', line: 4, column: 5 },
+  ]);
+  assert.deepEqual(extractImports('use a::*;\nuse b::c;\n', 'rust', true), [
+    { spec: 'a::*', line: 1, column: 5 },
+    { spec: 'b::c', line: 2, column: 5 },
+  ]);
+});
+
 test('resolveImport: relative resolution and external modules', () => {
   const set = new Set(['src/utils/helper.js', 'src/index.ts', 'src/api/index.ts']);
   assert.deepEqual(resolveImport('./utils/helper.js', 'src/index.ts', set), { kind: 'internal', id: 'file:src/utils/helper.js' });
