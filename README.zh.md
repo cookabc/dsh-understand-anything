@@ -24,6 +24,8 @@
 
 符号的 `line`、`column` 从 1 开始。`ua_explain` 返回 `source.citation`、节选起止行号，节选围绕定义位置展开，上限为 60 行、6,000 字符。源码变化后会尝试重新定位声明，并报告定位是否得到验证。
 
+非相对路径的导入也可能解析为内部文件：扫描根目录存在 `tsconfig.json` 时，会按其 `baseUrl` + `paths` 别名（如 `@/*`、`~/`、monorepo 包名映射）解析，别名导入成为内部依赖边而非外部模块。容忍 JSONC 注释与尾逗号；文件缺失或无法解析时，这些导入照旧按外部模块处理。
+
 变更分析的 `upstream` 沿已观测关系追踪，`inferredUpstream` 单独列出可能受影响的节点；`via` 给出追踪路径。`unmappedFiles` 提醒哪些变更文件尚未入图，`truncated` 提醒结果受限。无效 Git 基准或不可用的 Git 工作区会报错。
 
 ## 增量更新与保护
@@ -93,7 +95,7 @@ npm pack --dry-run --ignore-scripts
 
 ## 已知限制
 
-扫描器使用词法与正则提取，不是 AST 或类型检查器。虽然会屏蔽注释、字符串和 JavaScript 正则字面量，复杂语法、模板插值、宏、重导出、各语言的模块解析规则和动态派发仍可能遗漏。Rust 的多行 `use a::{ ... };` 树只记录根路径（如 `a::`），不提取花括号内的条目。行号指向声明位置，不表示完整函数范围。推断关系和模型注释应作为审阅线索。
+扫描器使用词法与正则提取，不是 AST 或类型检查器。虽然会屏蔽注释、字符串和 JavaScript 正则字面量，复杂语法、模板插值、宏、重导出、相对路径与 `tsconfig.json` `paths` 别名之外的模块解析规则和动态派发仍可能遗漏。Rust 的多行 `use a::{ ... };` 树只记录根路径（如 `a::`），不提取花括号内的条目。行号指向声明位置，不表示完整函数范围。推断关系和模型注释应作为审阅线索。
 
 任意层级的以下目录都不参与扫描：`.git`、`node_modules`、`vendor`、`dist`、`build`、`out`、`coverage`、`.next`、`.nuxt`、`.svelte-kit`、`.cache`、`.parcel-cache`、`.turbo`、`target`、`bin`、`obj`、`__pycache__`、`.venv`、`venv`、`.mypy_cache`、`.pytest_cache`、`.idea`、`.vscode`、`.dsh`、`.ua`、`Pods`、`DerivedData`、`.gradle`、`tmp`、`temp`、`logs`，以及其他所有隐藏目录；锁文件、压缩/打包产物与二进制文件同样跳过。这是既定排除规则：若你的源码恰好位于其中，用 `scope` 指定子树。
 

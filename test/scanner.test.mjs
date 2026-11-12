@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { scanProject, extractSymbols, extractImports, resolveImport } from '../lib/scanner.mjs';
+import { scanProject, extractSymbols, extractImports, parseTsConfigPaths, resolveImport } from '../lib/scanner.mjs';
 import { classifyLayer, fingerprint, inside, isIgnoredPath, languageOf, mergeConfig, safeRoot } from '../lib/util.mjs';
 
 const tmp = () => mkdtemp(join(tmpdir(), 'ua-scanner-'));
@@ -124,6 +124,117 @@ test('scanProject: walks a fixture, honors caps and is deterministic', async () 
     const capped = await scanProject(root, { maxFiles: 1 });
     assert.equal(capped.truncated, true);
     assert.equal(capped.files.length, 1);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('parseTsConfigPaths: tolerates JSONC comments and trailing commas, keeps strings intact', () => {
+  const text = `{
+    // line comment with "quotes" and {braces}
+    /* block
+       comment */
+    "compilerOptions": {
+      "baseUrl": "src", // trailing comment
+      "paths": {
+        "@/*": ["./helpers/*",],
+        "@app": ["../app/index.ts",],
+        // the comment text below must not swallow the next entry
+        "@note": ["./x,]"], /* "fake"//string */
+      },
+    },
+    "include": ["src/**/*"],
+  }`;
+  assert.deepEqual(parseTsConfigPaths(text), {
+    baseUrl: 'src',
+    paths: {
+      '@/*': ['./helpers/*'],
+      '@app': ['../app/index.ts'],
+      '@note': ['./x,]'],
+    },
+  });
+  // Plain JSON without comments keeps working.
+  assert.deepEqual(parseTsConfigPaths('{"compilerOptions":{"paths":{"a/*":["./a/*"]}}}'), { baseUrl: '.', paths: { 'a/*': ['./a/*'] } });
+  // A `//` inside a string is not a comment.
+  assert.deepEqual(parseTsConfigPaths('{"compilerOptions":{"paths":{"a//b":["./x"]}}}'), { baseUrl: '.', paths: { 'a//b': ['./x'] } });
+  // Missing paths, malformed JSONC and wrong shapes all degrade to null.
+  assert.equal(parseTsConfigPaths('{"compilerOptions":{"baseUrl":"."}}'), null);
+  assert.equal(parseTsConfigPaths('{ "compilerOptions": {, }'), null);
+  assert.equal(parseTsConfigPaths(''), null);
+  assert.equal(parseTsConfigPaths('{"compilerOptions":{"paths":{"a":42}}}'), null);
+});
+
+test('resolveImport: tsconfig paths aliases (wildcard, exact, priority, fallback)', () => {
+  const set = new Set(['src/utils/x.ts', 'src/utils/index.ts', 'packages/app/src/index.ts']);
+  const aliases = { baseUrl: '.', paths: { '@/*': ['./src/*'], '@app': ['packages/app/src'], '~/utils/*': ['./src/utils/*'] } };
+  // Wildcard pattern substitutes the matched segment into the target.
+  assert.deepEqual(resolveImport('@/utils/x', 'src/main.ts', set, aliases), { kind: 'internal', id: 'file:src/utils/x.ts', via: 'alias' });
+  // Extension and index-form candidates apply to alias targets too.
+  assert.deepEqual(resolveImport('@/utils', 'src/main.ts', set, aliases), { kind: 'internal', id: 'file:src/utils/index.ts', via: 'alias' });
+  // Exact pattern without `*` (monorepo package name to directory).
+  assert.deepEqual(resolveImport('@app', 'src/main.ts', set, aliases), { kind: 'internal', id: 'file:packages/app/src/index.ts', via: 'alias' });
+  // Non-star target under a wildcard pattern maps the whole spec there.
+  assert.deepEqual(resolveImport('@/utils/index.ts', 'src/main.ts', set, { baseUrl: '.', paths: { '@/*': ['./src/utils'] } }), { kind: 'internal', id: 'file:src/utils/index.ts', via: 'alias' });
+  // baseUrl joins before candidate expansion.
+  assert.deepEqual(resolveImport('@/utils/x', 'src/main.ts', set, { baseUrl: 'src', paths: { '@/*': ['./*'] } }), { kind: 'internal', id: 'file:src/utils/x.ts', via: 'alias' });
+  // First matching rule wins when several resolve.
+  assert.deepEqual(resolveImport('@/utils/x', 'src/main.ts', set, { baseUrl: '.', paths: { '@/*': ['./src/*'], '*/utils/x': ['./other/*'] } }), { kind: 'internal', id: 'file:src/utils/x.ts', via: 'alias' });
+  // A miss under one rule still lets a later rule resolve.
+  assert.deepEqual(resolveImport('@/utils/x', 'src/main.ts', set, { baseUrl: '.', paths: { 'nomatch/*': ['./other/*'], '@/*': ['./src/*'] } }).id, 'file:src/utils/x.ts');
+  // Alias miss and bare specifiers fall back to external, as before.
+  assert.deepEqual(resolveImport('@/missing', 'src/main.ts', set, aliases), { kind: 'external', id: 'module:@/missing' });
+  assert.deepEqual(resolveImport('react', 'src/main.ts', set, aliases), { kind: 'external', id: 'module:react' });
+  assert.deepEqual(resolveImport('react', 'src/main.ts', set), { kind: 'external', id: 'module:react' });
+  // Relative specifiers keep priority and behavior; aliases never intercept them.
+  assert.deepEqual(resolveImport('./utils/index.ts', 'src/main.ts', set, aliases), { kind: 'internal', id: 'file:src/utils/index.ts' });
+  assert.deepEqual(resolveImport('./missing', 'src/main.ts', set, aliases), { kind: 'unresolved', id: 'module:./missing' });
+});
+
+test('scanProject: auto-detects tsconfig aliases and fails safe', async () => {
+  const root = await tmp();
+  try {
+    await mkdir(join(root, 'src/utils'), { recursive: true });
+    await writeFile(join(root, 'tsconfig.json'), `{
+      // alias map
+      "compilerOptions": {
+        "baseUrl": ".",
+        "paths": { "@/*": ["./src/*"], },
+      },
+    }\n`);
+    await writeFile(join(root, 'src/index.ts'), "import { x } from '@/utils/x';\nimport dayjs from 'dayjs';\n");
+    await writeFile(join(root, 'src/utils/x.ts'), 'export const x = 1;\n');
+    const scan = await scanProject(root);
+    assert.deepEqual(scan.aliases, { baseUrl: '.', paths: { '@/*': ['./src/*'] } });
+    const fileSet = new Set(scan.files.map((f) => f.path));
+    assert.deepEqual(resolveImport('@/utils/x', 'src/index.ts', fileSet, scan.aliases), { kind: 'internal', id: 'file:src/utils/x.ts', via: 'alias' });
+    assert.deepEqual(resolveImport('dayjs', 'src/index.ts', fileSet, scan.aliases), { kind: 'external', id: 'module:dayjs' });
+
+    // Unparsable tsconfig degrades to no aliases; the scan itself still succeeds.
+    await writeFile(join(root, 'tsconfig.json'), '{ "compilerOptions": {,');
+    assert.equal((await scanProject(root)).aliases, null);
+
+    // A tsconfig without paths is also "no aliases".
+    await writeFile(join(root, 'tsconfig.json'), '{"compilerOptions":{"target":"es2022"}}');
+    assert.equal((await scanProject(root)).aliases, null);
+
+    // Absent tsconfig.
+    await rm(join(root, 'tsconfig.json'));
+    assert.equal((await scanProject(root)).aliases, null);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('scanProject: tsConfig override and scope-relative alias targets', async () => {
+  const root = await tmp();
+  try {
+    await mkdir(join(root, 'packages/app/src/utils'), { recursive: true });
+    await writeFile(join(root, 'packages/app/src/index.ts'), "import { x } from '@/utils/x';\n");
+    await writeFile(join(root, 'packages/app/src/utils/x.ts'), 'export const x = 1;\n');
+    const scan = await scanProject(root, { scope: 'packages/app', tsConfig: { paths: { '@/*': ['./src/*'] } } });
+    assert.deepEqual(scan.aliases, { baseUrl: 'packages/app', paths: { '@/*': ['./src/*'] } });
+    const fileSet = new Set(scan.files.map((f) => f.path));
+    assert.deepEqual(resolveImport('@/utils/x', 'packages/app/src/index.ts', fileSet, scan.aliases), { kind: 'internal', id: 'file:packages/app/src/utils/x.ts', via: 'alias' });
   } finally {
     await rm(root, { recursive: true, force: true });
   }

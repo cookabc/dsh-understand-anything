@@ -24,6 +24,8 @@ An existing `.understand-anything/` directory is reused automatically. Explicitl
 
 Symbols carry one-based `line` and `column`. `ua_explain` returns `source.citation`, `startLine` and `endLine`; excerpts are capped at 60 lines / 6,000 characters and centered around the definition. If the source changed, the tool tries to relocate the declaration and reports whether the anchor was verified.
 
+Non-relative imports can still resolve to internal files: when `tsconfig.json` sits at the scan root, its `baseUrl` + `paths` aliases (such as `@/*`, `~/` or monorepo package-name mappings) are applied, so aliased imports become internal edges instead of external modules. JSONC comments and trailing commas are tolerated; a missing or unparsable tsconfig leaves those imports external.
+
 `ua_diff.upstream` follows observed relationships. `inferredUpstream` contains additional possible dependents, with `via` evidence paths. `unmappedFiles` identifies changed files absent from the graph. `truncated` means the returned impact is bounded. Invalid explicit Git refs and unavailable Git worktrees return errors instead of a misleading empty impact.
 
 ## Reliable incremental scans
@@ -93,7 +95,7 @@ Zero runtime dependencies. Node.js ≥ 20, DSH `>=0.2.2-rc.1 <0.3.0`.
 
 ## Limits
 
-This is lexical extraction, not an AST/type checker. Comments, strings and JavaScript regex literals are masked, but complex syntax, template interpolation, macros, re-exports, language-specific module resolution and dynamic dispatch may be missed. Multi-line Rust `use a::{ ... };` trees record only the root path (such as `a::`), not the items inside the braces. Source positions identify declarations; they do not describe full function ranges. Treat inferred call edges and model annotations as review aids.
+This is lexical extraction, not an AST/type checker. Comments, strings and JavaScript regex literals are masked, but complex syntax, template interpolation, macros, re-exports, module resolution beyond relative paths and `tsconfig.json` `paths` aliases, and dynamic dispatch may be missed. Multi-line Rust `use a::{ ... };` trees record only the root path (such as `a::`), not the items inside the braces. Source positions identify declarations; they do not describe full function ranges. Treat inferred call edges and model annotations as review aids.
 
 Directories named `.git`, `node_modules`, `vendor`, `dist`, `build`, `out`, `coverage`, `.next`, `.nuxt`, `.svelte-kit`, `.cache`, `.parcel-cache`, `.turbo`, `target`, `bin`, `obj`, `__pycache__`, `.venv`, `venv`, `.mypy_cache`, `.pytest_cache`, `.idea`, `.vscode`, `.dsh`, `.ua`, `Pods`, `DerivedData`, `.gradle`, `tmp`, `temp`, and `logs` are skipped at any depth, as are all other hidden directories, lockfiles, minified/bundled assets and binary files. These paths are excluded by design; use `scope` to point at a subtree if your first-party code lives in one of them.
 
