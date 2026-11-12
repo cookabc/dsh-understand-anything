@@ -93,7 +93,7 @@ npm pack --dry-run --ignore-scripts
 
 ## 已知限制
 
-扫描器使用词法与正则提取，不是 AST 或类型检查器。虽然会屏蔽注释、字符串和 JavaScript 正则字面量，复杂语法、模板插值、宏、重导出、各语言的模块解析规则和动态派发仍可能遗漏。行号指向声明位置，不表示完整函数范围。推断关系和模型注释应作为审阅线索。
+扫描器使用词法与正则提取，不是 AST 或类型检查器。虽然会屏蔽注释、字符串和 JavaScript 正则字面量，复杂语法、模板插值、宏、重导出、各语言的模块解析规则和动态派发仍可能遗漏。Rust 的多行 `use a::{ ... };` 树只记录根路径（如 `a::`），不提取花括号内的条目。行号指向声明位置，不表示完整函数范围。推断关系和模型注释应作为审阅线索。
 
 任意层级的以下目录都不参与扫描：`.git`、`node_modules`、`vendor`、`dist`、`build`、`out`、`coverage`、`.next`、`.nuxt`、`.svelte-kit`、`.cache`、`.parcel-cache`、`.turbo`、`target`、`bin`、`obj`、`__pycache__`、`.venv`、`venv`、`.mypy_cache`、`.pytest_cache`、`.idea`、`.vscode`、`.dsh`、`.ua`、`Pods`、`DerivedData`、`.gradle`、`tmp`、`temp`、`logs`，以及其他所有隐藏目录；锁文件、压缩/打包产物与二进制文件同样跳过。这是既定排除规则：若你的源码恰好位于其中，用 `scope` 指定子树。
 

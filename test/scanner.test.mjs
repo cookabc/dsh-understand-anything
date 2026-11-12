@@ -77,6 +77,19 @@ test('imports: specifiers and wiki links', () => {
   assert.deepEqual(extractImports('See [[Architecture Notes]] and [[Other]].', 'markdown'), ['Architecture Notes', 'Other']);
 });
 
+test('imports: Go block form, aliases and locations', () => {
+  const src = 'package main\n\nimport (\n\t"fmt"\n\texe "os/exec"\n\t_ "embed" // fake "nope/leak"\n\t. "math"\n)\n\nfunc main() {}\n';
+  assert.deepEqual(extractImports(src, 'go'), ['fmt', 'os/exec', 'embed', 'math']);
+  assert.deepEqual(extractImports(src, 'go', true).map((s) => [s.spec, s.line, s.column]), [
+    ['fmt', 4, 2], ['os/exec', 5, 6], ['embed', 6, 4], ['math', 7, 4],
+  ]);
+  // A raw-string doc example must not be read as real imports.
+  assert.deepEqual(extractImports('package main\n\nconst help = `usage:\nimport (\n\t"fake/pkg"\n)`\n\nfunc main() {}\n', 'go'), []);
+  // Single-line form is unchanged.
+  assert.deepEqual(extractImports('package main\nimport "fmt"\nfunc main(){}\n', 'go'), ['fmt']);
+  assert.deepEqual(extractImports('package main\nimport "fmt"\nfunc main(){}\n', 'go', true), [{ spec: 'fmt', line: 2, column: 1 }]);
+});
+
 test('resolveImport: relative resolution and external modules', () => {
   const set = new Set(['src/utils/helper.js', 'src/index.ts', 'src/api/index.ts']);
   assert.deepEqual(resolveImport('./utils/helper.js', 'src/index.ts', set), { kind: 'internal', id: 'file:src/utils/helper.js' });
