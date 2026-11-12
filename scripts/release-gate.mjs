@@ -4,7 +4,8 @@
  * green. Checks (any failure exits 1 with the offending line):
  *   1. `node --check` on every shipped .js/.mjs file
  *   2. Full test suite (`node --test test/*.test.mjs`)
- *   3. `npm pack --dry-run` ships exactly the declared files (no stray dirs)
+ *   3. `npm pack --dry-run` ships exactly the declared files (real per-file
+ *      diff, both directions, against the expanded `files` field)
  *   4. market.json pipeline: regenerate into /tmp and validate with the DSH
  *      validator the same way scripts/market-index.mjs does, then optionally
  *      diff against the committed market.json (informational, not failure).
@@ -13,9 +14,9 @@
  * docs/PUBLISHING.md. Run with `--strict` to also fail when the committed
  * market.json is stale (>1 version behind package.json version).
  */
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { readdirSync, statSync, readFileSync } from 'node:fs';
-import { join, dirname, relative } from 'node:path';
+import { join, dirname, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -52,21 +53,119 @@ run('full test suite', () => {
   if (!/ℹ pass \d+/.test(out)) throw new Error(out.split('\n').slice(-3).join(' '));
 });
 
-// 3. npm pack ships only declared files
-run('npm pack file list matches files field', () => {
-  const out = exec('npm', ['pack', '--dry-run', '--ignore-scripts'], { cwd: root });
-  const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
-  const shipped = out.split('\n').filter((l) => /^\s*npm notice\s+\d+\.\d+ kB/.test(l) || l.includes('LICENSE') || l.includes('.md')).map((l) => l.replace(/^\s*npm notice\s+/, '').replace(/^\s+/, ''));
-  // permission-free passthrough: just ensure statSync sees declared tops
-  const declared = pkg.files ?? [];
-  for (const d of declared) {
-    if (!statSync(join(root, d), { throwIfNoEntry: false })) throw new Error(`declared "${d}" is not present`);
-  }
-  for (const p of shipped) {
-    const top = p.split('/')[0];
-    if (!['index.js', 'cordis.patch.yml', 'lib', 'bin', 'skills', 'scripts', 'README.md', 'README.zh.md', 'docs', 'LICENSE'].includes(top)) {
-      throw new Error(`npm pack ships undeclared "${p}"`);
+// spawnSync wrapper for steps that need stdout AND stderr: execFileSync only
+// returns stdout, and `npm pack` prints its file list on stderr (`npm notice`).
+const execOut = (cmd, args, opts = {}) => {
+  const r = spawnSync(cmd, args, { encoding: 'utf8', timeout: 120_000, ...opts });
+  if (r.error) throw r.error;
+  if (r.status !== 0) throw new Error(`exit ${r.status}: ${(r.stderr || r.stdout || '').trim().split('\n').slice(-2).join(' | ')}`);
+  return { stdout: r.stdout ?? '', stderr: r.stderr ?? '' };
+};
+
+// npm's own "Tarball Contents" listing -> Set of tarball-relative paths.
+// Format verified against npm 11.x: file lines sit between the "Tarball
+// Contents" and "Tarball Details" markers and read `npm notice 1.3kB LICENSE`
+// (size glued to the unit, no column padding, no trailing spaces).
+const parsePackFileList = (out) => {
+  const shipped = new Set();
+  let inContents = false;
+  for (const line of out.split('\n')) {
+    if (line.startsWith('npm notice Tarball Contents')) inContents = true;
+    else if (line.startsWith('npm notice Tarball Details')) break;
+    else if (inContents) {
+      const m = /^npm notice\s+\d[\d.]*\s*[kmgtp]?B\s+(.+?)\s*$/i.exec(line);
+      if (m) shipped.add(m[1]);
     }
+  }
+  if (!shipped.size) throw new Error('no "npm notice <size> <path>" lines found — npm notice format changed?');
+  return shipped;
+};
+
+// Names npm never packs wherever they appear (npm-packlist's built-in
+// excludes plus the ignore files themselves — all confirmed by probe).
+const NPM_ALWAYS_EXCLUDED = new Set([
+  '.git', 'node_modules', 'CVS', '.svn', '.hg', '.DS_Store', '.npmrc',
+  'npm-debug.log', 'config.gypi', 'package-lock.json', '.gitignore', '.npmignore',
+]);
+
+// Files in the git index (null outside a git checkout). npm packs everything
+// that is not gitignored, so "tracked" is exactly what a directory entry in
+// `files` means — and untracked strays inside a declared directory stay
+// outside this list, which is what this check must refuse to ship.
+const trackedFiles = () => {
+  const r = spawnSync('git', ['ls-files', '-z'], { cwd: root, encoding: 'utf8', timeout: 120_000 });
+  if (r.error || r.status !== 0) return null;
+  return new Set((r.stdout ?? '').split('\0').filter(Boolean));
+};
+
+// package.json `files` -> Set of expected tarball paths. File entries just
+// need to exist on disk; directory entries expand to the git-tracked files
+// under them (minus npm's always-excluded names), falling back to a plain
+// disk walk when git is unavailable.
+const expandDeclaredFiles = (pkg) => {
+  const tracked = trackedFiles();
+  const expected = new Set();
+  const walk = (dir, rel) => {
+    for (const name of readdirSync(dir)) {
+      if (NPM_ALWAYS_EXCLUDED.has(name)) continue;
+      const st = statSync(join(dir, name), { throwIfNoEntry: false });
+      if (!st) continue;
+      const childRel = rel ? `${rel}/${name}` : name;
+      if (st.isDirectory()) walk(join(dir, name), childRel);
+      else if (st.isFile() && (!tracked || tracked.has(childRel))) expected.add(childRel);
+    }
+  };
+  for (const entry of pkg.files ?? []) {
+    const rel = relative(root, join(root, entry)).split(sep).join('/');
+    const st = statSync(join(root, entry), { throwIfNoEntry: false });
+    if (!st) throw new Error(`files field declares "${entry}" but it is not present in the repo`);
+    if (st.isFile()) {
+      expected.add(rel);
+    } else if (st.isDirectory()) {
+      if (tracked) {
+        const prefix = rel === '.' ? '' : `${rel}/`;
+        for (const f of tracked) {
+          if (f.startsWith(prefix) && !NPM_ALWAYS_EXCLUDED.has(f.split('/').pop())) expected.add(f);
+        }
+      } else {
+        walk(join(root, entry), rel === '.' ? '' : rel);
+      }
+    }
+  }
+  return expected;
+};
+
+const mainEntry = (pkg) => {
+  if (typeof pkg.main !== 'string' || !pkg.main) return null;
+  const rel = relative(root, join(root, pkg.main)).split(sep).join('/');
+  return rel.startsWith('..') ? null : rel;
+};
+
+// npm packs these at the tarball root even when `files` omits them (verified
+// by probe: package.json, any README*, any LICENSE/LICENCE variant, plus the
+// `main` file), so they stay whitelisted instead of failing every run.
+const isNpmBuiltin = (pkg) => (p) => p === 'package.json'
+  || /^readme(\..+)?$/i.test(p)
+  || /^licen[cs]e(\..+)?$/i.test(p)
+  || p === mainEntry(pkg);
+
+// 3. npm pack ships exactly the declared files — a real per-file diff in both
+// directions, not a passthrough. `files` (directories expanded to their
+// tracked files) must be what the tarball contains, modulo npm's own
+// always-carried builtins above; anything extra or missing fails by path.
+run('npm pack file list matches files field', () => {
+  const r = execOut('npm', ['pack', '--dry-run', '--ignore-scripts'], { cwd: root });
+  const shipped = parsePackFileList(`${r.stdout}${r.stderr}`);
+  const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
+  const expected = expandDeclaredFiles(pkg);
+  const builtin = isNpmBuiltin(pkg);
+  const missing = [...expected].filter((p) => !shipped.has(p)).sort();
+  const extra = [...shipped].filter((p) => !expected.has(p) && !builtin(p)).sort();
+  if (missing.length || extra.length) {
+    throw new Error([
+      missing.length ? `declared by files but not shipped: ${missing.join(', ')}` : null,
+      extra.length ? `shipped but not declared by files (and not an npm builtin): ${extra.join(', ')}` : null,
+    ].filter(Boolean).join('\n'));
   }
 });
 
