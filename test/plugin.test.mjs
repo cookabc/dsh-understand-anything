@@ -4,6 +4,12 @@ import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { apply, name } from '../index.js';
+import {
+  globalNodeModulesFromExecPath,
+  resolveValidator,
+  VALIDATOR_PACKAGE,
+  validatorPathFromDshBin,
+} from '../scripts/market-validator.mjs';
 
 function fakeCtx() {
   const tools = new Map();
@@ -542,4 +548,73 @@ test('boundary: an aborted signal surfaces SCAN_CANCELLED with cancelled:true', 
     const tourCancelled = await call(tools, 'ua_tour', { root }, { signal: AbortSignal.abort() });
     assert.notEqual(tourCancelled.error, 'SCAN_CANCELLED', `read-only tour must not masquerade as a cancelled scan (got ${tourCancelled.error})`);
   } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('validator path derivation: dsh bin -> realpath -> dsh package root -> nested validator', () => {
+  const realpath = (p) => (p === '/usr/local/bin/dsh'
+    ? '/opt/node-v24/lib/node_modules/@deepseek-ai/dsh/lib/bin.js' : p);
+  const packageName = (dir) => (dir === '/opt/node-v24/lib/node_modules/@deepseek-ai/dsh'
+    || dir === '/opt/lib/node_modules/@deepseek-ai/dsh' ? '@deepseek-ai/dsh' : null);
+  assert.equal(
+    validatorPathFromDshBin('/usr/local/bin/dsh', realpath, packageName),
+    '/opt/node-v24/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-plugin-market-index',
+  );
+  // a bin sitting directly in the package root resolves the same way
+  const flatRealpath = (p) => (p === '/x/dsh' ? '/opt/lib/node_modules/@deepseek-ai/dsh/bin.js' : p);
+  assert.equal(
+    validatorPathFromDshBin('/x/dsh', flatRealpath, packageName),
+    '/opt/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-plugin-market-index',
+  );
+});
+
+test('validator path derivation fails safe on broken links, misses and bad input', () => {
+  assert.equal(validatorPathFromDshBin('/gone/dsh', () => { throw new Error('ENOENT'); }, () => null), null);
+  assert.equal(validatorPathFromDshBin('/bin/dsh', (p) => p, () => null), null);
+  assert.equal(validatorPathFromDshBin(null), null);
+  assert.equal(validatorPathFromDshBin(''), null);
+  assert.equal(validatorPathFromDshBin(42), null);
+});
+
+test('global node_modules is derived from the running node per platform', () => {
+  assert.equal(globalNodeModulesFromExecPath('/opt/n/bin/node', 'darwin'), '/opt/n/lib/node_modules');
+  assert.equal(globalNodeModulesFromExecPath('/opt/n/bin/node', 'linux'), '/opt/n/lib/node_modules');
+  assert.ok(globalNodeModulesFromExecPath('/x/node', 'win32').endsWith('node_modules'));
+});
+
+test('resolveValidator: direct require wins, then the dsh tree, then it fails safe', () => {
+  const boom = () => { throw new Error('MODULE_NOT_FOUND'); };
+  const missing = Object.assign((id) => { throw new Error(`MODULE_NOT_FOUND for ${id}`); }, { resolve: boom });
+  assert.equal(resolveValidator(missing, () => null, () => null), null);
+
+  // a module without the validator API counts as a miss, not a match
+  const impostor = Object.assign(() => ({ nope: true }), { resolve: boom });
+  assert.equal(resolveValidator(impostor, () => null, () => null), null);
+
+  const fake = { parseMarketIndex() {}, marketInstallTarget() {} };
+  const seen = [];
+  const track = (fn) => Object.assign((id) => { seen.push(String(id)); return fn(id); }, { resolve: boom });
+
+  assert.equal(resolveValidator(track(() => fake), () => '/x/bin/dsh', () => '/x/dsh/node_modules/v'), fake);
+  assert.deepEqual(seen, [VALIDATOR_PACKAGE]);
+
+  seen.length = 0;
+  const dshTreeOnly = track((id) => {
+    if (id === '/x/dsh/node_modules/v') return fake;
+    throw new Error('MODULE_NOT_FOUND');
+  });
+  assert.equal(resolveValidator(dshTreeOnly, () => '/x/bin/dsh', () => '/x/dsh/node_modules/v'), fake);
+  assert.deepEqual(seen, [VALIDATOR_PACKAGE, '/x/dsh/node_modules/v']);
+});
+
+test('resolveValidator finds the installed dsh validator, or fails safe without one', async () => {
+  const mod = resolveValidator();
+  if (mod === null) return;
+  assert.equal(typeof mod.parseMarketIndex, 'function');
+  assert.equal(typeof mod.marketInstallTarget, 'function');
+  const committed = JSON.parse(await readFile(new URL('../market.json', import.meta.url), 'utf8'));
+  const parsed = mod.parseMarketIndex(committed, 'https://cookabc.github.io/dsh-understand-anything/market.json');
+  assert.equal(parsed.plugins[0].name, committed.plugins[0].name);
+  assert.equal(parsed.plugins[0].versions[0].version, committed.plugins[0].versions[0].version);
+  const target = mod.marketInstallTarget(committed.plugins[0].name, committed.plugins[0].versions[0]);
+  assert.match(target.spec, new RegExp(`#${committed.plugins[0].versions[0].source.commit}$`));
 });

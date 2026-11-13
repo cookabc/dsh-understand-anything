@@ -51,6 +51,8 @@ node scripts/market-index.mjs --git https://github.com/you/dsh-understand-anythi
 [market-index] valid; install target: dsh-understand-anything@<version>
 ```
 
+校验器不用装成依赖：脚本按「自身依赖树 → PATH 上 `dsh` 的安装树（bin symlink 经 realpath 解析出 dsh 包根，再取它内嵌的校验器）→ 运行中的 node 对应的全局 `node_modules`」顺序查找；都没找到（比如发布机上没有 dsh）才跳过校验，照常生成索引。
+
 然后把这个 `market.json` 放到任何 **HTTPS 静态地址**（GitHub Pages / 对象存储 / 自建站都行）。
 
 要求：URL 必须是 `http:`/`https:`，不能带账号密码、不能带 fragment；JSON 里 `icon` 用相对路径会按索引 URL 解析。

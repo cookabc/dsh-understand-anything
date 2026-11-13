@@ -8,7 +8,8 @@
  * document that users can add.
  *
  * This script validates the produced document with the same validator DSH
- * itself uses (`@deepseek-ai/dsh-plugin-market-index`), so a passing run means
+ * itself uses (`@deepseek-ai/dsh-plugin-market-index`), resolved from wherever
+ * DSH is installed (see scripts/market-validator.mjs), so a passing run means
  * the market will accept it.
  *
  * Usage:
@@ -24,10 +25,9 @@
 import { execFileSync } from 'node:child_process';
 import { parseArgs } from 'node:util';
 import { readFileSync, writeFileSync } from 'node:fs';
-import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
+import { resolveValidator } from './market-validator.mjs';
 
-const require = createRequire(import.meta.url);
 const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
 
 const { values } = parseArgs({
@@ -130,19 +130,27 @@ const index = {
   }],
 };
 
-// Validate with DSH's own validator (no dependency: resolved from the running installation).
-let parsed;
-try {
-  const { parseMarketIndex, marketInstallTarget } = require('@deepseek-ai/dsh-plugin-market-index');
-  parsed = parseMarketIndex(index, 'https://example.invalid/index.json');
-  const target = marketInstallTarget(pkg.name, parsed.plugins[0].versions[0]);
-  process.stderr.write(`[market-index] valid; install target: ${target.spec}\n`);
-} catch (error) {
-  if (error?.path) {
-    process.stderr.write(`[market-index] INVALID at ${error.path}: ${error.reason}\n`);
-    process.exit(1);
+// Validate with DSH's own validator (not a dependency: see market-validator.mjs
+// for the resolution chain — this tree, the installed dsh, or global node_modules).
+const validator = resolveValidator();
+let unavailable = validator
+  ? null
+  : 'not found in this module tree, the installed dsh, or global node_modules';
+if (validator) {
+  try {
+    const parsed = validator.parseMarketIndex(index, 'https://example.invalid/index.json');
+    const target = validator.marketInstallTarget(pkg.name, parsed.plugins[0].versions[0]);
+    process.stderr.write(`[market-index] valid; install target: ${target.spec}\n`);
+  } catch (error) {
+    if (error?.path) {
+      process.stderr.write(`[market-index] INVALID at ${error.path}: ${error.reason}\n`);
+      process.exit(1);
+    }
+    unavailable = error.message;
   }
-  process.stderr.write(`[market-index] validator unavailable (${error.message}); document written unvalidated\n`);
+}
+if (unavailable) {
+  process.stderr.write(`[market-index] validator unavailable (${unavailable}); document written unvalidated\n`);
 }
 
 const json = `${JSON.stringify(index, null, 2)}\n`;

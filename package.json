@@ -16,6 +16,7 @@
     "bin",
     "skills",
     "scripts/market-index.mjs",
+    "scripts/market-validator.mjs",
     "README.md",
     "README.zh.md",
     "docs/PUBLISHING.md",

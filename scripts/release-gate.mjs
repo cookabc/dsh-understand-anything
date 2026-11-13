@@ -6,9 +6,10 @@
  *   2. Full test suite (`node --test test/*.test.mjs`)
  *   3. `npm pack --dry-run` ships exactly the declared files (real per-file
  *      diff, both directions, against the expanded `files` field)
- *   4. market.json pipeline: regenerate into /tmp and validate with the DSH
- *      validator the same way scripts/market-index.mjs does, then optionally
- *      diff against the committed market.json (informational, not failure).
+ *   4. market.json pipeline: regenerate into /tmp — the generator validates it
+ *      with DSH's own validator when one is reachable, and this gate also
+ *      validates the committed market.json (the file users actually fetch)
+ *      then; without a reachable dsh install it falls back to shape checks.
  *
  * This is the user-visible "release checklist" as an executable gate, from
  * docs/PUBLISHING.md. Run with `--strict` to also fail when the committed
@@ -18,6 +19,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { readdirSync, statSync, readFileSync } from 'node:fs';
 import { join, dirname, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { resolveValidator } from './market-validator.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const failures = [];
@@ -41,6 +43,7 @@ run('node --check on shipped JS/MJS', () => {
     'index.js',
     'bin/ua-post-commit.mjs',
     'scripts/market-index.mjs',
+    'scripts/market-validator.mjs',
     ...readdirSync(join(root, 'lib')).filter((f) => f.endsWith('.mjs') || f.endsWith('.js')).map((f) => `lib/${f}`),
   ];
   for (const f of files) exec('node', ['--check', join(root, f)]);
@@ -173,8 +176,15 @@ run('npm pack file list matches files field', () => {
 // The generator itself requires npm-registry publish time (unavailable until
 // you `npm publish`), so for the local gate we pin a synthetic timestamp —
 // the pipeline shape is what's being validated here, not registry state.
+// When DSH's own validator resolves (scripts/market-validator.mjs), the
+// generator validates the regenerated document (exit 1 on INVALID) and the
+// committed market.json is validated too; without a reachable dsh install the
+// gate stays green and only checks the shape.
 run('market index pipeline validates', () => {
-  exec('node', [join(root, 'scripts', 'market-index.mjs'), '--timestamp', '9999999999', '--out', '/tmp/ua-market-check.json']);
+  const { stderr } = execOut('node', [join(root, 'scripts', 'market-index.mjs'), '--timestamp', '9999999999', '--out', '/tmp/ua-market-check.json']);
+  const validLine = stderr.split('\n').find((line) => line.includes('[market-index] valid; install target'));
+  if (validLine) console.log(`   ${validLine}`);
+  else console.log('   validator unavailable here; shape checks only');
   const generated = JSON.parse(readFileSync('/tmp/ua-market-check.json', 'utf8'));
   const committed = JSON.parse(readFileSync(join(root, 'market.json'), 'utf8'));
   if (generated.format !== 1 || !Array.isArray(generated.plugins)) {
@@ -184,6 +194,14 @@ run('market index pipeline validates', () => {
   const com = (committed.plugins ?? []).map((p) => p.name).sort();
   if (JSON.stringify(gen) !== JSON.stringify(com)) {
     throw new Error(`plugin list drifted: generated [${gen}] vs committed [${com}]`);
+  }
+  const validator = resolveValidator();
+  if (!validator) return;
+  try {
+    validator.parseMarketIndex(committed, 'https://cookabc.github.io/dsh-understand-anything/market.json');
+    console.log('   committed market.json passes the DSH validator');
+  } catch (error) {
+    throw new Error(`committed market.json INVALID at ${error?.path}: ${error?.reason ?? error?.message}`);
   }
 });
 
