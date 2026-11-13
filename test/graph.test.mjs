@@ -85,6 +85,36 @@ test('incremental scan preserves annotations on unchanged files', async () => {
   }
 });
 
+test('buildGraph: go.mod module paths and replaces become internal edges with basis markers', async () => {
+  const root = await tmp();
+  try {
+    await mkdir(join(root, 'internal/store'), { recursive: true });
+    await mkdir(join(root, 'local/x'), { recursive: true });
+    await writeFile(join(root, 'go.mod'), 'module example.com/app\n\nreplace example.com/x => ./local/x\n');
+    await writeFile(join(root, 'main.go'), 'package main\n\nimport (\n\t"fmt"\n\t"example.com/app/internal/store"\n\t"example.com/x"\n)\n\nfunc main() {}\n');
+    await writeFile(join(root, 'internal/store/store.go'), 'package store\n\nfunc Save() {}\n');
+    await writeFile(join(root, 'local/x/x.go'), 'package x\n\nfunc Run() {}\n');
+    const graph = buildGraph(root, await scanProject(root), { language: 'en' });
+    const imports = graph.edges.filter((e) => e.type === 'imports' && e.source === 'file:main.go');
+    const storeEdge = imports.find((e) => e.target === 'file:internal/store/store.go');
+    assert.ok(storeEdge, 'module-package import resolves to a scanned file');
+    assert.equal(storeEdge.resolution, 'internal');
+    assert.equal(storeEdge.evidence.basis, 'go-mod-module');
+    assert.equal(storeEdge.evidence.specifier, 'example.com/app/internal/store');
+    const replaceEdge = imports.find((e) => e.target === 'file:local/x/x.go');
+    assert.ok(replaceEdge, 'replaced module import resolves to the local directory');
+    assert.equal(replaceEdge.resolution, 'internal');
+    assert.equal(replaceEdge.evidence.basis, 'go-mod-replace');
+    const fmtEdge = imports.find((e) => e.target === 'module:fmt');
+    assert.ok(fmtEdge, 'stdlib import stays external');
+    assert.equal(fmtEdge.resolution, 'external');
+    assert.equal(fmtEdge.evidence.basis, 'external');
+    assert.ok(!graph.nodes.some((n) => n.id.startsWith('module:example.com/app')), 'in-module packages must not become external module nodes');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('queryGraph / explainNode / annotateGraph / rebuildLayers', async () => {
   const root = await fixture();
   try {

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { scanProject, extractSymbols, extractImports, parseTsConfigPaths, resolveImport } from '../lib/scanner.mjs';
+import { scanProject, extractSymbols, extractImports, parseGoModText, parseTsConfigPaths, resolveImport } from '../lib/scanner.mjs';
 import { classifyLayer, fingerprint, inside, isIgnoredPath, languageOf, mergeConfig, safeRoot } from '../lib/util.mjs';
 
 const tmp = () => mkdtemp(join(tmpdir(), 'ua-scanner-'));
@@ -269,6 +269,121 @@ test('scanProject: tsConfig override and scope-relative alias targets', async ()
     assert.deepEqual(scan.aliases, { baseUrl: 'packages/app', paths: { '@/*': ['./src/*'] } });
     const fileSet = new Set(scan.files.map((f) => f.path));
     assert.deepEqual(resolveImport('@/utils/x', 'packages/app/src/index.ts', fileSet, scan.aliases), { kind: 'internal', id: 'file:packages/app/src/utils/x.ts', via: 'alias' });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('parseGoModText: module path, local replaces, comments and fail-safe', () => {
+  const text = `module example.com/app
+
+go 1.22
+
+require (
+\tgithub.com/dep v1.0.0
+)
+
+// swap a dependency for a local copy
+replace example.com/x => ./local/x // trailing note
+replace example.com/x/sub v1.2.3 => ../shared/sub
+
+replace (
+\texample.com/y => ./vendor/y
+\texample.com/y/extra v0.1.0 => ./vendor/extra
+\texample.com/net => github.com/other/net
+)
+`;
+  // Network (module-path) replace targets are dropped; versioned old sides keep only the path.
+  assert.deepEqual(parseGoModText(text), {
+    module: 'example.com/app',
+    replaces: {
+      'example.com/x': './local/x',
+      'example.com/x/sub': '../shared/sub',
+      'example.com/y': './vendor/y',
+      'example.com/y/extra': './vendor/extra',
+    },
+  });
+  // No module directive, blank input and wrong types degrade to null.
+  assert.equal(parseGoModText('go 1.22\n'), null);
+  assert.equal(parseGoModText(''), null);
+  assert.equal(parseGoModText(null), null);
+});
+
+test('resolveImport: go.mod module paths, local replaces and priority', () => {
+  const set = new Set([
+    'internal/store.go', 'internal/db/db.go',
+    'local/x/x.go', 'local/x/adapter.go',
+    'vendor/y/y.go', 'vendor/extra/x/x.go', 'ts/shim.ts',
+  ]);
+  const go = { module: 'example.com/app', scope: '', replaces: { 'example.com/x': 'local/x', 'example.com/y': 'vendor/y', 'example.com/y/extra': 'vendor/extra' } };
+  // `<pkg>.go` next to the package directory.
+  assert.deepEqual(resolveImport('example.com/app/internal/store', 'main.go', set, null, go), { kind: 'internal', id: 'file:internal/store.go', via: 'module' });
+  // Package file named after the last directory segment (`db/db.go`).
+  assert.deepEqual(resolveImport('example.com/app/internal/db', 'main.go', set, null, go), { kind: 'internal', id: 'file:internal/db/db.go', via: 'module' });
+  // The module path itself has no file candidate and stays external.
+  assert.deepEqual(resolveImport('example.com/app', 'main.go', set, null, go), { kind: 'external', id: 'module:example.com/app' });
+  // Prefix miss and unmatched candidates stay external, never fabricated.
+  assert.deepEqual(resolveImport('example.com/app/internal/missing', 'main.go', set, null, go), { kind: 'external', id: 'module:example.com/app/internal/missing' });
+  // Replace targets root the resolved path, including the replace root itself.
+  assert.deepEqual(resolveImport('example.com/x', 'main.go', set, null, go), { kind: 'internal', id: 'file:local/x/x.go', via: 'replace' });
+  assert.deepEqual(resolveImport('example.com/x/adapter', 'main.go', set, null, go), { kind: 'internal', id: 'file:local/x/adapter.go', via: 'replace' });
+  // A replace match that resolves to nothing stays external with the original spec.
+  assert.deepEqual(resolveImport('example.com/x/nope', 'main.go', set, null, go), { kind: 'external', id: 'module:example.com/x/nope' });
+  // The most specific replace prefix wins when several match.
+  assert.deepEqual(resolveImport('example.com/y/extra/x', 'main.go', set, null, go), { kind: 'internal', id: 'file:vendor/extra/x/x.go', via: 'replace' });
+  assert.deepEqual(resolveImport('example.com/y', 'main.go', set, null, go), { kind: 'internal', id: 'file:vendor/y/y.go', via: 'replace' });
+  // tsconfig aliases keep priority over go.mod for matching specs.
+  assert.deepEqual(resolveImport('example.com/app/internal/store', 'main.ts', set, { baseUrl: '.', paths: { 'example.com/app/internal/store': ['./ts/shim.ts'] } }, go), { kind: 'internal', id: 'file:ts/shim.ts', via: 'alias' });
+  // Relative specifiers are never intercepted by go.mod.
+  assert.deepEqual(resolveImport('./internal/store.go', 'main.go', set, null, go), { kind: 'internal', id: 'file:internal/store.go' });
+  // Without module info the old external behavior is unchanged.
+  assert.deepEqual(resolveImport('example.com/app/internal/store', 'main.go', set), { kind: 'external', id: 'module:example.com/app/internal/store' });
+  assert.deepEqual(resolveImport('example.com/app/internal/store', 'main.go', set, null, null), { kind: 'external', id: 'module:example.com/app/internal/store' });
+});
+
+test('scanProject: auto-detects go.mod module paths and fails safe', async () => {
+  const root = await tmp();
+  try {
+    await mkdir(join(root, 'internal/store'), { recursive: true });
+    await mkdir(join(root, 'local/x'), { recursive: true });
+    await writeFile(join(root, 'go.mod'), 'module example.com/app\n\nreplace example.com/x => ./local/x\nreplace example.com/net => github.com/other/net\n');
+    await writeFile(join(root, 'main.go'), 'package main\n\nimport (\n\t"fmt"\n\t"example.com/app/internal/store"\n\t"example.com/x/adapter"\n\t"example.com/net/pkg"\n)\n\nfunc main() {}\n');
+    await writeFile(join(root, 'internal/store/store.go'), 'package store\n\nfunc Save() {}\n');
+    await writeFile(join(root, 'local/x/adapter.go'), 'package x\n\nfunc Adapter() {}\n');
+    const scan = await scanProject(root);
+    assert.deepEqual(scan.goModule, { module: 'example.com/app', scope: '', replaces: { 'example.com/x': 'local/x' } });
+    const fileSet = new Set(scan.files.map((f) => f.path));
+    assert.deepEqual(resolveImport('example.com/app/internal/store', 'main.go', fileSet, null, scan.goModule), { kind: 'internal', id: 'file:internal/store/store.go', via: 'module' });
+    assert.deepEqual(resolveImport('example.com/x/adapter', 'main.go', fileSet, null, scan.goModule), { kind: 'internal', id: 'file:local/x/adapter.go', via: 'replace' });
+    // Network replaces are ignored and stdlib imports stay external.
+    assert.deepEqual(resolveImport('example.com/net/pkg', 'main.go', fileSet, null, scan.goModule), { kind: 'external', id: 'module:example.com/net/pkg' });
+    assert.deepEqual(resolveImport('fmt', 'main.go', fileSet, null, scan.goModule), { kind: 'external', id: 'module:fmt' });
+
+    // Unparsable go.mod (no module directive) degrades to no module info.
+    await writeFile(join(root, 'go.mod'), 'go 1.22\n');
+    assert.equal((await scanProject(root)).goModule, null);
+
+    // Absent go.mod.
+    await rm(join(root, 'go.mod'));
+    assert.equal((await scanProject(root)).goModule, null);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('scanProject: goModule override and scope-relative replace targets', async () => {
+  const root = await tmp();
+  try {
+    await mkdir(join(root, 'packages/app/internal/store'), { recursive: true });
+    await mkdir(join(root, 'packages/app/local/x'), { recursive: true });
+    await writeFile(join(root, 'packages/app/main.go'), 'package main\n\nimport (\n\t"example.com/app/internal/store"\n\t"example.com/x"\n)\n\nfunc main() {}\n');
+    await writeFile(join(root, 'packages/app/internal/store/store.go'), 'package store\n\nfunc Save() {}\n');
+    await writeFile(join(root, 'packages/app/local/x/x.go'), 'package x\n\nfunc Run() {}\n');
+    const scan = await scanProject(root, { scope: 'packages/app', goModule: { module: 'example.com/app', replaces: { 'example.com/x': './local/x' } } });
+    assert.deepEqual(scan.goModule, { module: 'example.com/app', scope: 'packages/app', replaces: { 'example.com/x': 'packages/app/local/x' } });
+    const fileSet = new Set(scan.files.map((f) => f.path));
+    assert.deepEqual(resolveImport('example.com/app/internal/store', 'packages/app/main.go', fileSet, null, scan.goModule), { kind: 'internal', id: 'file:packages/app/internal/store/store.go', via: 'module' });
+    assert.deepEqual(resolveImport('example.com/x', 'packages/app/main.go', fileSet, null, scan.goModule), { kind: 'internal', id: 'file:packages/app/local/x/x.go', via: 'replace' });
   } finally {
     await rm(root, { recursive: true, force: true });
   }
