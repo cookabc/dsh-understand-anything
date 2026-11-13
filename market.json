@@ -72,7 +72,7 @@
           "source": {
             "type": "git",
             "url": "https://github.com/cookabc/dsh-understand-anything",
-            "commit": "765545c0b44e66435a50cbc405d1896a5bfcb8b3"
+            "commit": "be5428d84da0053e031029ee595d3e96561e0d63"
           },
           "engines": {
             "dsh": ">=0.2.2-rc.1 <0.3.0"
