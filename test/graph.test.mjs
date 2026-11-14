@@ -203,6 +203,24 @@ test('buildTour: localized step text for every documented language', async () =>
   }
 });
 
+test('buildTour: step copy follows three phases instead of repeating one headline', () => {
+  /* 24 个文件 = 4 步：标题必须随进度变化——此前每一步都叫
+     「start from the foundations」，长 tour 读起来像复读机。 */
+  const bigGraph = {
+    nodes: Array.from({ length: 24 }, (_, i) => ({ id: `file:f${String(i).padStart(2, '0')}.ts`, type: 'file', name: `f${i}.ts`, filePath: `f${String(i).padStart(2, '0')}.ts` })),
+    edges: [],
+  };
+  for (const language of ['en', 'zh', 'zh-TW', 'ja', 'ko', 'ru', 'vi']) {
+    const steps = buildTour(bigGraph, language);
+    assert.equal(steps.length, 4);
+    assert.ok(new Set(steps.map((s) => s.title)).size > 1, `${language} 步骤标题必须随进度变化`);
+    assert.notEqual(steps[0].title, steps.at(-1).title, `${language} 首尾两步必须不同相`);
+  }
+  assert.match(buildTour(bigGraph, 'en').at(-1).title, /busiest entry points$/);
+  assert.match(buildTour(bigGraph, 'zh').at(-1).title, /最后读最繁忙的入口$/);
+  assert.deepEqual(buildTour({ nodes: [], edges: [] }, 'en'), [], '空图产出 0 步');
+});
+
 test('annotateGraph: a numeric nodeId still triggers a layer rebuild', async () => {
   const root = await fixture();
   try {

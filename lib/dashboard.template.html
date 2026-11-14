@@ -206,6 +206,8 @@
       tourHeading: '导览',
       selectNode: '选择一个节点',
       selectNodeHelp: '点击任意圆圈查看其摘要、分层和关系；拖拽重新排布，滚动缩放。',
+      layerNames: { External: '外部', Other: '其他', Test: '测试', Utility: '工具', API: '接口', Service: '服务', Data: '数据', UI: '界面' },
+      typeNames: { file: '文件', function: '函数', class: '类', document: '文档', config: '配置', module: '模块', resource: '资源', table: '表' },
       hint: '由 dsh-understand-anything 在本地生成 · 不访问网络，不调用大模型',
       nodes: '个节点',
       edges: '条边',
@@ -248,6 +250,16 @@
     });
     return text;
   }
+
+  /* Layer ids are stable color keys; their display names follow the locale. */
+  var layerName = function (k) {
+    var names = CHROME_STRINGS.layerNames || {};
+    return names[k] || k;
+  };
+  var typeName = function (k) {
+    var names = CHROME_STRINGS.typeNames || {};
+    return names[k] || k;
+  };
 
   /* Apply the resolved locale to every static string in the chrome. */
   var localizeStaticChrome = function () {
@@ -470,8 +482,8 @@
     });
     var html = '<div class="name">' + escapeHtml(n.name) + '</div>'
       + '<div class="path">' + escapeHtml(n.path || n.id) + '</div>'
-      + '<span class="badge">' + escapeHtml(n.type) + '</span>'
-      + '<span class="badge" style="color:' + colorOf(n) + '">' + escapeHtml(n.layer) + '</span>';
+      + '<span class="badge">' + escapeHtml(typeName(n.type)) + '</span>'
+      + '<span class="badge" style="color:' + colorOf(n) + '">' + escapeHtml(layerName(n.layer)) + '</span>';
     if (n.tags.length) html += '<div>' + n.tags.map(function (tag) { return '<span class="badge">' + escapeHtml(tag) + '</span>'; }).join('') + '</div>';
     html += '<p>' + (n.summary ? escapeHtml(n.summary) : '<i>' + escapeHtml(chrome('noDescription')) + '</i>') + '</p>';
     html += '<div class="rels"><b>' + escapeHtml(chrome('incomingPrefix') + incoming.length + ')') + '</b><br>'
@@ -495,7 +507,7 @@
     var row = document.createElement('div');
     row.className = 'layer';
     row.innerHTML = '<span class="dot" style="background:' + (COLORS[k] || COLORS.Other) + '"></span>'
-      + '<span>' + escapeHtml(k) + '</span><span class="count">' + counts[k] + '</span>';
+      + '<span>' + escapeHtml(layerName(k)) + '</span><span class="count">' + counts[k] + '</span>';
     row.addEventListener('click', function () {
       layerState[k] = !layerState[k];
       row.classList.toggle('off', !layerState[k]);
@@ -559,7 +571,7 @@
         tooltip.style.display = 'block';
         tooltip.style.left = (ev.clientX + 12) + 'px';
         tooltip.style.top = (ev.clientY + 12) + 'px';
-        tooltip.textContent = n.name + ' · ' + n.type + (n.path ? ' · ' + n.path : '');
+        tooltip.textContent = n.name + ' · ' + typeName(n.type) + (n.path ? ' · ' + n.path : '');
       } else tooltip.style.display = 'none';
       return;
     }
