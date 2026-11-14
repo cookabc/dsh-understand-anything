@@ -1,9 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import { symlinkSync } from 'node:fs';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { scanProject, extractSymbols, extractImports, parseGoModText, parseTsConfigPaths, resolveImport } from '../lib/scanner.mjs';
+import { fileURLToPath } from 'node:url';
+import { PARSER_VERSION, scanProject, extractSymbols, extractImports, parseGoModText, parseTsConfigPaths, resolveImport } from '../lib/scanner.mjs';
 import { classifyLayer, fingerprint, inside, isIgnoredPath, languageOf, mergeConfig, safeRoot } from '../lib/util.mjs';
 
 const tmp = () => mkdtemp(join(tmpdir(), 'ua-scanner-'));
@@ -386,5 +389,89 @@ test('scanProject: goModule override and scope-relative replace targets', async 
     assert.deepEqual(resolveImport('example.com/x', 'packages/app/main.go', fileSet, null, scan.goModule), { kind: 'internal', id: 'file:packages/app/local/x/x.go', via: 'replace' });
   } finally {
     await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('rust use-tree parsing: depth-capped and bounded, no stack overflow on pathological input', () => {
+  /* 递归展开器没有上限时，5000 层嵌套 `use` 会以 RangeError 打穿整个
+     scanProject（实测）；64 层封顶后深层树整体跳过，正常树不受影响。 */
+  const deep = 'use a::' + '{'.repeat(5000) + 'b' + '}'.repeat(5000) + ';\n';
+  assert.ok(Array.isArray(extractImports(deep, 'rust')), '深嵌套不再抛 RangeError');
+  assert.ok(Array.isArray(extractImports('use a::{\n'.repeat(2000), 'rust')), '大量未闭合 use 不抛错');
+  assert.deepEqual(extractImports('use a::{b::{c, d}, e};\n', 'rust'), ['a::b::c', 'a::b::d', 'a::e'], '深度上限不影响正常树');
+});
+
+test('scanProject: tsconfig.json symlink only applies when the target is a regular file inside the project', async () => {
+  const dir = await tmp();
+  const outside = await tmp();
+  try {
+    await mkdir(join(dir, 'src'));
+    await writeFile(join(dir, 'src', 'x.ts'), 'export const x = 1;\n');
+    await writeFile(join(outside, 'tsconfig.json'), JSON.stringify({ compilerOptions: { baseUrl: '.', paths: { '@/*': ['./o/*'] } } }));
+    await symlinkSync(join(outside, 'tsconfig.json'), join(dir, 'tsconfig.json'));
+    const outsideScan = await scanProject(dir);
+    assert.equal(outsideScan.aliases, null, '指向项目外的软链一律不读（含设备/FIFO 等特殊文件）');
+    await rm(join(dir, 'tsconfig.json'));
+    await mkdir(join(dir, 'base'));
+    await writeFile(join(dir, 'base', 'tsconfig.json'), JSON.stringify({ compilerOptions: { baseUrl: '.', paths: { '@/*': ['./src/*'] } } }));
+    await symlinkSync(join(dir, 'base', 'tsconfig.json'), join(dir, 'tsconfig.json'));
+    const insideScan = await scanProject(dir);
+    assert.deepEqual(insideScan.aliases?.paths, { '@/*': ['./src/*'] }, '指向项目内普通文件的软链仍然生效');
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+    await rm(outside, { recursive: true, force: true });
+  }
+});
+
+test('scanProject: stale parserVersion invalidates the file cache and forces re-extraction', async () => {
+  const dir = await tmp();
+  try {
+    await writeFile(join(dir, 'main.go'), 'package main\n\nimport (\n\t"fmt"\n\t"os"\n)\n\nfunc main() { fmt.Println(os.Args) }\n');
+    const first = await scanProject(dir);
+    assert.equal(first.files.length, 1);
+    const fresh = { meta: { parserVersion: PARSER_VERSION, fileStructure: { 'main.go': { hash: first.files[0].hash, symbols: [], imports: [], importSites: [], callSites: [] } } } };
+    const reused = await scanProject(dir, { previous: fresh });
+    assert.equal(reused.reusedFiles, 1, '同版本且形状完整的缓存命中');
+    const stale = structuredClone(fresh);
+    stale.meta.parserVersion = PARSER_VERSION - 1;
+    const reparsed = await scanProject(dir, { previous: stale });
+    assert.equal(reparsed.reusedFiles, 0, '旧版本缓存整体失效');
+    assert.deepEqual(reparsed.files[0].imports, ['fmt', 'os'], '导入被重新提取（旧版本缓存里的空 Go imports 不再复用）');
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('extractors and meta-file reads: pathological inputs stay bounded', { skip: process.platform === 'win32' ? 'mkfifo unavailable' : false }, async () => {
+  /* 病态输入在隔离子进程里跑：若有二次方回溯回归，父进程用超时杀掉，
+     测试失败而不是整个套件挂死；FIFO 也不会污染测试进程的线程池。 */
+  const child = fileURLToPath(new URL('./pathological.child.mjs', import.meta.url));
+  const N = 400000;
+  const jobs = [
+    { name: 'python blank-lines', kind: 'extract', lang: 'python', text: '\n'.repeat(N) + 'x' },
+    { name: 'python blank-run', kind: 'extract', lang: 'python', text: '"' + '\n'.repeat(N) + '"' },
+    { name: 'go blank-run (Go block regression)', kind: 'extract', lang: 'go', text: '"' + '\n'.repeat(N) + '"' },
+    { name: 'java spaced-lines', kind: 'extract', lang: 'java', text: '  \n'.repeat(Math.floor(N / 3)) },
+    { name: 'rust unclosed use spam', kind: 'extract', lang: 'rust', text: 'use a::{\n'.repeat(50000) },
+    { name: 'rust deep nesting', kind: 'extract', lang: 'rust', text: 'use a::' + '{'.repeat(5000) + 'b' + '}'.repeat(5000) + ';' },
+    { name: 'go unclosed import spam', kind: 'extract', lang: 'go', text: 'import (\n'.repeat(50000) },
+    { name: 'ts export-brace spam', kind: 'extract', lang: 'typescript', text: 'export {'.repeat(64285) },
+    { name: 'js unclosed paren spam', kind: 'extract', lang: 'javascript', text: 'const a = ('.repeat(50000) },
+    { name: 'c include spam', kind: 'extract', lang: 'c', text: '#include <'.repeat(75000) },
+    { name: 'scan with go.mod FIFO', kind: 'fifo', file: 'go.mod' },
+    { name: 'scan with tsconfig.json FIFO', kind: 'fifo', file: 'tsconfig.json' },
+    { name: 'scan with tsconfig.json symlink to FIFO', kind: 'symlink-fifo', file: 'tsconfig.json' },
+  ];
+  const r = spawnSync(process.execPath, [child], { input: JSON.stringify(jobs), encoding: 'utf8', timeout: 30000, maxBuffer: 16 * 1024 * 1024 });
+  assert.equal(r.error, undefined, `子进程未在 30s 内完成（二次方回溯回归？）: ${r.error?.code ?? ''}`);
+  assert.equal(r.status, 0, `子进程异常退出: ${r.stderr?.slice(-400)}`);
+  const results = JSON.parse(r.stdout);
+  for (const job of jobs) {
+    const v = results[job.name];
+    assert.ok(typeof v === 'number', `${job.name} 异常: ${v}`);
+    assert.ok(v < 5000, `${job.name} 耗时 ${v}ms（>5s，疑似回归）`);
+  }
+  for (const scanJob of jobs.filter((j) => j.kind !== 'extract')) {
+    assert.equal(results[`${scanJob.name}|aliasesNull`], true, `${scanJob.name}: 特殊文件的配置必须按「无配置」处理`);
   }
 });

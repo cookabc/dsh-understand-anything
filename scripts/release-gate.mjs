@@ -50,9 +50,14 @@ run('node --check on shipped JS/MJS', () => {
   return files.length;
 });
 
-// 2. full test suite
+// 2. full test suite (list derived from the directory so a newly added
+//    test file can never silently drop out of the gate)
 run('full test suite', () => {
-  const out = exec('node', ['--test', 'test/core.test.mjs', 'test/figma.test.mjs', 'test/graph.test.mjs', 'test/hooks.test.mjs', 'test/knowledge.test.mjs', 'test/plugin.test.mjs', 'test/scanner.test.mjs']);
+  const testFiles = readdirSync(join(root, 'test'))
+    .filter((f) => f.endsWith('.test.mjs'))
+    .sort()
+    .map((f) => join(root, 'test', f));
+  const out = exec('node', ['--test', ...testFiles]);
   if (!/ℹ pass \d+/.test(out)) throw new Error(out.split('\n').slice(-3).join(' '));
 });
 
