@@ -68,11 +68,11 @@
       "versions": [
         {
           "version": "0.2.0",
-          "publishTimestamp": 1794499837,
+          "publishTimestamp": 1794625223,
           "source": {
             "type": "git",
             "url": "https://github.com/cookabc/dsh-understand-anything",
-            "commit": "be5428d84da0053e031029ee595d3e96561e0d63"
+            "commit": "13627179b764776dff5e1657214d166dfbe14ed5"
           },
           "engines": {
             "dsh": ">=0.2.2-rc.1 <0.3.0"
